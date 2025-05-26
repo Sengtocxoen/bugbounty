@@ -200,17 +200,21 @@ class BugBountyScanner:
         if xsstrike_path and xsstrike_path.exists():
             print(f"[+] Found XSStrike at {xsstrike_path}")
             try:
-                # Run XSStrike scan
+                # Run XSStrike scan with correct parameters
                 xsstrike_output = os.path.join(target_dir, 'xsstrike_results.json')
                 subprocess.run([
                     'python3', str(xsstrike_path),
-                    '--url', target['identifier'],
-                    '--params',
+                    '-u', target['identifier'],
                     '--crawl',
                     '--blind',
                     '--skip-dom',
-                    '--skip-poc',
-                    '--output', xsstrike_output
+                    '--json',
+                    '--timeout', '10',
+                    '--threads', '10',
+                    '--delay', '1',
+                    '--console-log-level', 'VULN',
+                    '--file-log-level', 'VULN',
+                    '--log-file', xsstrike_output
                 ], check=True)
                 results['xsstrike'] = xsstrike_output
             except Exception as e:
@@ -261,7 +265,7 @@ class BugBountyScanner:
                 'output_file': os.path.join(target_dir, 'sqlmap_results')
             }
         
-        # Add other tools
+        # Add Gospider with correct parameters
         tools.update({
             'gospider': {
                 'command': [
@@ -270,15 +274,14 @@ class BugBountyScanner:
                     '-o', os.path.join(target_dir, 'gospider_results.txt'),
                     '-c', '10',
                     '-d', '3',
-                    '--js',
                     '--sitemap',
                     '--robots',
                     '--other-source',
                     '--include-subs',
-                    '--json',
-                    '--timeout', '10',
-                    '--concurrent', '10',
-                    '--delay', '1'
+                    '-t', '10',
+                    '-m', '10',
+                    '-k', '1',
+                    '-v'
                 ],
                 'output_file': os.path.join(target_dir, 'gospider_results.txt')
             }
