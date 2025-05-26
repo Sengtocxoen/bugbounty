@@ -15,9 +15,10 @@ from urllib.parse import urlparse, urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-# Import tool manager
+# Import tool manager and installer
 sys.path.append(str(Path(__file__).parent.parent))
 from tools.tool_manager import ToolManager
+from tools.install_tools import ToolInstaller
 
 class VenvManager:
     def __init__(self):
@@ -36,7 +37,6 @@ class VenvManager:
                 venv.create(self.venv_dir, with_pip=True)
                 print(f"[+] Virtual environment created at {self.venv_dir}")
                 self.install_requirements()
-                self.install_tools()
             except Exception as e:
                 print(f"[-] Error creating virtual environment: {str(e)}")
                 return False
@@ -65,54 +65,6 @@ pipx>=1.2.0
         except Exception as e:
             print(f"[-] Error installing requirements: {str(e)}")
             return False
-
-    def install_tools(self):
-        """Install required tools"""
-        print("[+] Installing required tools...")
-        
-        # Install XSStrike
-        xsstrike_dir = self.tools_dir / 'XSStrike'
-        if not xsstrike_dir.exists():
-            print("[+] Installing XSStrike...")
-            try:
-                subprocess.run(['git', 'clone', 'https://github.com/s0md3v/XSStrike', str(xsstrike_dir)], check=True)
-                pip_path = self.venv_dir / 'bin' / 'pip' if os.name != 'nt' else self.venv_dir / 'Scripts' / 'pip.exe'
-                subprocess.run([str(pip_path), 'install', '-r', str(xsstrike_dir / 'requirements.txt'), '--break-system-packages'], check=True)
-            except Exception as e:
-                print(f"[-] Error installing XSStrike: {str(e)}")
-
-        # Install Arjun using pipx
-        print("[+] Installing Arjun...")
-        try:
-            subprocess.run(['pipx', 'install', 'arjun'], check=True)
-        except Exception as e:
-            print(f"[-] Error installing Arjun: {str(e)}")
-
-        # Install ParamSpider
-        paramspider_dir = self.tools_dir / 'paramspider'
-        if not paramspider_dir.exists():
-            print("[+] Installing ParamSpider...")
-            try:
-                subprocess.run(['git', 'clone', 'https://github.com/devanshbatham/paramspider', str(paramspider_dir)], check=True)
-                pip_path = self.venv_dir / 'bin' / 'pip' if os.name != 'nt' else self.venv_dir / 'Scripts' / 'pip.exe'
-                subprocess.run([str(pip_path), 'install', '.'], cwd=str(paramspider_dir), check=True)
-            except Exception as e:
-                print(f"[-] Error installing ParamSpider: {str(e)}")
-
-        # Install waybackurls
-        print("[+] Installing waybackurls...")
-        try:
-            subprocess.run(['go', 'install', 'github.com/tomnomnom/waybackurls@latest'], check=True)
-        except Exception as e:
-            print(f"[-] Error installing waybackurls: {str(e)}")
-
-        # Install gospider
-        print("[+] Installing gospider...")
-        try:
-            os.environ['GO111MODULE'] = 'on'
-            subprocess.run(['go', 'install', 'github.com/jaeles-project/gospider@latest'], check=True)
-        except Exception as e:
-            print(f"[-] Error installing gospider: {str(e)}")
 
     def get_python_path(self):
         """Get the path to the Python executable in the virtual environment"""
@@ -439,7 +391,18 @@ class BugBountyScanner:
         # Define other tools and their commands
         tools = {
             'nuclei': {
-                'command': ['nuclei', '-u', target['identifier'], '-t', self.templates_dir, '-j'],
+                'command': [
+                    'nuclei',
+                    '-u', target['identifier'],
+                    '-t', self.templates_dir,
+                    '-severity', 'critical,high,medium',
+                    '-c', '50',
+                    '-bulk-size', '25',
+                    '-rate-limit', '150',
+                    '-timeout', '5',
+                    '-json',
+                    '-o', os.path.join(target_dir, 'nuclei_results.json')
+                ],
                 'output_file': os.path.join(target_dir, 'nuclei_results.json')
             }
         }
@@ -460,7 +423,11 @@ class BugBountyScanner:
                     '--threads=10',
                     '--param-del="&"',
                     '--skip-urlencode',
-                    '--eval="from urllib.parse import unquote; print(unquote(\'%s\'))"'
+                    '--eval="from urllib.parse import unquote; print(unquote(\'%s\'))"',
+                    '--smart',
+                    '--technique=BEUSTQ',
+                    '--time-sec=5',
+                    '--retries=2'
                 ],
                 'output_file': os.path.join(target_dir, 'sqlmap_results')
             }
@@ -479,7 +446,10 @@ class BugBountyScanner:
                     '--robots',
                     '--other-source',
                     '--include-subs',
-                    '--json'
+                    '--json',
+                    '--timeout', '10',
+                    '--concurrent', '10',
+                    '--delay', '1'
                 ],
                 'output_file': os.path.join(target_dir, 'gospider_results.txt')
             },
@@ -487,7 +457,7 @@ class BugBountyScanner:
                 'command': [
                     'waybackurls',
                     target['identifier'].replace('https://', '').replace('http://', ''),
-                    '>', os.path.join(target_dir, 'waybackurls_results.txt')
+                    '|', 'tee', os.path.join(target_dir, 'waybackurls_results.txt')
                 ],
                 'output_file': os.path.join(target_dir, 'waybackurls_results.txt')
             }
@@ -814,6 +784,12 @@ def main():
         print("[-] Failed to set up virtual environment")
         sys.exit(1)
 
+    # Initialize tool installer
+    tool_installer = ToolInstaller()
+    
+    # Install required tools
+    tool_installer.install_all_tools()
+
     # Get the path to the current script
     current_script = Path(__file__)
     
@@ -828,8 +804,6 @@ if __name__ == "__main__":
         main()
     else:
         # We're in the virtual environment, so run the actual scanner code
-        # [Rest of your existing BugBountyScanner class and code here]
-        # ... (keep all the existing scanner code)
         if len(sys.argv) < 2:
             print("Usage:")
             print("  For single target: python bugbounty_scanner.py -t <target_url>")
