@@ -9,7 +9,7 @@ import requests
 import subprocess
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 class BugBountyScanner:
     def __init__(self, csv_file=None, target=None, config_file=None):
@@ -50,7 +50,23 @@ class BugBountyScanner:
         if csv_file:
             self.targets = self.load_targets_from_csv()
         elif target:
-            self.targets = [{'identifier': target, 'asset_type': 'url'}]
+            self.targets = [{'identifier': self.normalize_url(target), 'asset_type': 'url'}]
+
+    def normalize_url(self, url):
+        """Add scheme to URL if missing"""
+        if not url.startswith(('http://', 'https://')):
+            # Try HTTPS first, if it fails, try HTTP
+            try:
+                response = requests.head(f'https://{url}', timeout=5, allow_redirects=True)
+                return f'https://{url}'
+            except:
+                try:
+                    response = requests.head(f'http://{url}', timeout=5, allow_redirects=True)
+                    return f'http://{url}'
+                except:
+                    # If both fail, default to HTTPS
+                    return f'https://{url}'
+        return url
 
     def load_config(self, config_file):
         """Load program-specific configuration"""
@@ -71,8 +87,10 @@ class BugBountyScanner:
                 reader = csv.DictReader(f)
                 for row in reader:
                     if self.is_valid_target(row):
+                        # Normalize the URL before adding to targets
+                        identifier = self.normalize_url(row.get('identifier', ''))
                         targets.append({
-                            'identifier': row.get('identifier', ''),
+                            'identifier': identifier,
                             'asset_type': row.get('asset_type', ''),
                             'instruction': row.get('instruction', ''),
                             'eligible_for_bounty': row.get('eligible_for_bounty', 'false').lower() == 'true',
@@ -96,7 +114,7 @@ class BugBountyScanner:
         print(f"[+] Checking endpoints for {target['identifier']}")
         results = []
         for endpoint in self.config.get('endpoints', []):
-            url = f"{target['identifier'].rstrip('/')}{endpoint}"
+            url = urljoin(target['identifier'].rstrip('/'), endpoint)
             try:
                 response = requests.get(
                     url,
@@ -118,7 +136,7 @@ class BugBountyScanner:
         print(f"[+] Checking auth mechanisms for {target['identifier']}")
         results = []
         for auth_endpoint in self.config.get('auth_endpoints', []):
-            url = f"{target['identifier'].rstrip('/')}{auth_endpoint}"
+            url = urljoin(target['identifier'].rstrip('/'), auth_endpoint)
             try:
                 response = requests.get(
                     url,
@@ -161,7 +179,7 @@ class BugBountyScanner:
         print(f"\n[+] Scanning target: {target['identifier']}")
         
         # Create target-specific directory
-        target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_'))
+        target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_').replace(':', '_'))
         os.makedirs(target_dir, exist_ok=True)
         
         # Save target information
