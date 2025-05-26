@@ -141,8 +141,12 @@ class BugBountyScanner:
             subprocess.run([
                 'arjun',
                 '-u', target['identifier'],
-                '-oJ', arjun_output,
-                '--passive'
+                '-o', arjun_output,
+                '--passive',
+                '-t', '10',
+                '-T', '10',
+                '--rate-limit', '10',
+                '--stable'
             ], check=True)
             
             if os.path.exists(arjun_output):
@@ -233,7 +237,6 @@ class BugBountyScanner:
                     '-bulk-size', '25',
                     '-rate-limit', '150',
                     '-timeout', '5',
-                    '-json',
                     '-o', os.path.join(target_dir, 'nuclei_results.json')
                 ],
                 'output_file': os.path.join(target_dir, 'nuclei_results.json')
