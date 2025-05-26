@@ -157,6 +157,45 @@ class BugBountyScanner:
         
         return results
 
+    def check_nuclei_templates(self):
+        """Check if nuclei templates are installed and install if needed"""
+        print("[+] Checking nuclei templates...")
+        try:
+            # Check if nuclei is installed
+            subprocess.run(["nuclei", "-version"], check=True, capture_output=True)
+            
+            # Check if templates directory exists in common locations
+            possible_template_dirs = [
+                os.path.expanduser("~/.local/nuclei-templates"),  # Default Kali location
+                os.path.expanduser("~/nuclei-templates"),         # Common location
+                "/usr/local/share/nuclei-templates",             # System-wide location
+                "/usr/share/nuclei-templates"                    # Alternative system location
+            ]
+            
+            self.templates_dir = None
+            for template_dir in possible_template_dirs:
+                if os.path.exists(template_dir):
+                    self.templates_dir = template_dir
+                    print(f"[+] Found nuclei templates in: {template_dir}")
+                    break
+            
+            if not self.templates_dir:
+                print("[+] Installing nuclei templates...")
+                self.templates_dir = os.path.expanduser("~/.local/nuclei-templates")
+                subprocess.run([
+                    "nuclei", "-update-templates"
+                ], check=True)
+                print("[+] Nuclei templates installed successfully")
+            
+        except subprocess.CalledProcessError as e:
+            print(f"[-] Error: {str(e)}")
+            print("[-] Please make sure nuclei is installed. You can install it with:")
+            print("    go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest")
+            sys.exit(1)
+        except Exception as e:
+            print(f"[-] Error checking nuclei templates: {str(e)}")
+            sys.exit(1)
+
     def run_nuclei_templates(self, target):
         """Run nuclei templates"""
         print(f"[+] Running nuclei templates for {target['identifier']}")
@@ -164,21 +203,27 @@ class BugBountyScanner:
         
         # Define template categories and their paths
         template_categories = {
-            'cves': 'nuclei-templates/cves/',
-            'exposures': 'nuclei-templates/exposures/',
-            'misconfiguration': 'nuclei-templates/misconfiguration/',
-            'vulnerabilities': 'nuclei-templates/vulnerabilities/'
+            'cves': 'cves/',
+            'exposures': 'exposures/',
+            'misconfiguration': 'misconfiguration/',
+            'vulnerabilities': 'vulnerabilities/'
         }
         
         for category, template_path in template_categories.items():
             try:
                 output_file = os.path.join(self.results_base_dir, f"nuclei_{category}.json")
+                full_template_path = os.path.join(self.templates_dir, template_path)
+                
+                if not os.path.exists(full_template_path):
+                    print(f"[-] Template path not found: {full_template_path}")
+                    continue
+                
                 subprocess.run([
                     "nuclei",
                     "-u", target['identifier'],
-                    "-t", template_path,
+                    "-t", full_template_path,
                     "-o", output_file,
-                    "-j"  # Use -j for JSON output instead of -json
+                    "-j"  # Use -j for JSON output
                 ], check=True)
                 results.append(output_file)
             except Exception as e:
@@ -257,33 +302,6 @@ class BugBountyScanner:
         
         print(f"\n[+] All scans completed. Summary saved to {summary_file}")
         return summary_file
-
-    def check_nuclei_templates(self):
-        """Check if nuclei templates are installed and install if needed"""
-        print("[+] Checking nuclei templates...")
-        try:
-            # Check if nuclei is installed
-            subprocess.run(["nuclei", "-version"], check=True, capture_output=True)
-            
-            # Check if templates directory exists
-            templates_dir = os.path.expanduser("~/nuclei-templates")
-            if not os.path.exists(templates_dir):
-                print("[+] Installing nuclei templates...")
-                subprocess.run([
-                    "git", "clone", "https://github.com/projectdiscovery/nuclei-templates.git",
-                    templates_dir
-                ], check=True)
-                print("[+] Nuclei templates installed successfully")
-            else:
-                print("[+] Nuclei templates found")
-        except subprocess.CalledProcessError as e:
-            print(f"[-] Error: {str(e)}")
-            print("[-] Please make sure nuclei is installed. You can install it with:")
-            print("    go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest")
-            sys.exit(1)
-        except Exception as e:
-            print(f"[-] Error checking nuclei templates: {str(e)}")
-            sys.exit(1)
 
 def main():
     if len(sys.argv) < 2:
