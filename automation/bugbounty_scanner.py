@@ -45,7 +45,6 @@ class BugBountyScanner:
             'XSStrike': 'https://github.com/s0md3v/XSStrike',
             'Arjun': 'https://github.com/s0md3v/Arjun',
             'ParamSpider': 'https://github.com/devanshbatham/ParamSpider',
-            'Waybackurls': 'https://github.com/tomnomnom/waybackurls',
             'Gospider': 'https://github.com/jaeles-project/gospider'
         }
         
@@ -87,20 +86,6 @@ class BugBountyScanner:
         elif target:
             self.targets = [{'identifier': self.normalize_url(target), 'asset_type': 'url'}]
 
-    def install_required_tools(self):
-        """Install required tools if not present"""
-        print("[+] Checking and installing required tools...")
-        for tool_name, repo_url in self.tool_urls.items():
-            if not self.tool_manager.get_tool_path(tool_name):
-                print(f"[+] Installing {tool_name}...")
-                install_cmd = None
-                if tool_name == 'XSStrike':
-                    install_cmd = "pip install -r requirements.txt"
-                elif tool_name == 'Arjun':
-                    install_cmd = "pip install -r requirements.txt"
-                elif tool_name == 'ParamSpider':
-                    install_cmd = "pip install -r requirements.txt"
-                self.tool_manager.install_tool(tool_name, repo_url, install_cmd)
 
     def normalize_url(self, url):
         """Add scheme to URL if missing"""
@@ -243,6 +228,15 @@ class BugBountyScanner:
             print(f"[-] Error checking nuclei templates: {str(e)}")
             sys.exit(1)
 
+    def get_tool_path(self, tool_name):
+        """Get the path to a tool"""
+        tools_dir = Path(__file__).parent.parent / 'tools'
+        if tool_name == 'XSStrike':
+            return tools_dir / 'XSStrike' / 'xsstrike.py'
+        elif tool_name == 'ParamSpider':
+            return tools_dir / 'paramspider' / 'paramspider.py'
+        return None
+
     def discover_parameters(self, target):
         """Discover parameters using multiple tools"""
         print(f"[+] Discovering parameters for {target['identifier']}")
@@ -270,14 +264,15 @@ class BugBountyScanner:
             print(f"[-] Error running Arjun: {str(e)}")
         
         # Try ParamSpider as backup
-        paramspider_path = self.get_tool_path('ParamSpider')
-        if paramspider_path and not parameters:
+        if not parameters:
             try:
                 print("[+] Running ParamSpider...")
                 paramspider_output = os.path.join(self.results_base_dir, f"paramspider_results_{target['identifier'].replace('/', '_')}.txt")
+                domain = urlparse(target['identifier']).netloc
                 subprocess.run([
-                    'python', str(paramspider_path),
-                    '--domain', urlparse(target['identifier']).netloc,
+                    'paramspider',
+                    '--domain', domain,
+                    '--exclude', 'js,jpg,jpeg,gif,css,tif,tiff,png,ttf,woff,woff2,ico',
                     '--output', paramspider_output
                 ], check=True)
                 
@@ -310,13 +305,13 @@ class BugBountyScanner:
         
         # Check for XSStrike
         xsstrike_path = self.get_tool_path('XSStrike')
-        if xsstrike_path:
+        if xsstrike_path and xsstrike_path.exists():
             print(f"[+] Found XSStrike at {xsstrike_path}")
             try:
                 # Run XSStrike scan
                 xsstrike_output = os.path.join(target_dir, 'xsstrike_results.json')
                 subprocess.run([
-                    'python', str(xsstrike_path),
+                    'python3', str(xsstrike_path),
                     '--url', target['identifier'],
                     '--params',
                     '--crawl',
@@ -328,6 +323,8 @@ class BugBountyScanner:
                 results['xsstrike'] = xsstrike_output
             except Exception as e:
                 print(f"[-] Error running XSStrike: {str(e)}")
+        else:
+            print(f"[-] XSStrike not found at {xsstrike_path}")
         
         # Define other tools and their commands
         tools = {
@@ -393,25 +390,13 @@ class BugBountyScanner:
                     '--delay', '1'
                 ],
                 'output_file': os.path.join(target_dir, 'gospider_results.txt')
-            },
-            'waybackurls': {
-                'command': [
-                    'waybackurls',
-                    target['identifier'].replace('https://', '').replace('http://', ''),
-                    '|', 'tee', os.path.join(target_dir, 'waybackurls_results.txt')
-                ],
-                'output_file': os.path.join(target_dir, 'waybackurls_results.txt')
             }
         })
         
         def run_tool(tool_name, tool_config):
             try:
                 print(f"[+] Running {tool_name} for {target['identifier']}")
-                # Handle special case for waybackurls which uses shell redirection
-                if tool_name == 'waybackurls':
-                    subprocess.run(' '.join(tool_config['command']), shell=True, check=True)
-                else:
-                    subprocess.run(tool_config['command'], check=True)
+                subprocess.run(tool_config['command'], check=True)
                 return tool_name, tool_config['output_file']
             except Exception as e:
                 print(f"[-] Error running {tool_name} for {target['identifier']}: {str(e)}")
