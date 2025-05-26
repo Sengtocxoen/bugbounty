@@ -295,29 +295,33 @@ class BugBountyScanner:
         print(f"[+] Running security tools for {target['identifier']}")
         results = {}
         
+        # Create target-specific directory
+        target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_').replace(':', '_'))
+        os.makedirs(target_dir, exist_ok=True)
+        
         # Define tools and their commands
         tools = {
             'nuclei': {
                 'command': ['nuclei', '-u', target['identifier'], '-t', self.templates_dir, '-j'],
-                'output_file': 'nuclei_results.json'
+                'output_file': os.path.join(target_dir, 'nuclei_results.json')
             },
             'sqlmap': {
-                'command': ['sqlmap', '-u', target['identifier'], '--batch', '--random-agent', '--output-dir', self.results_base_dir],
-                'output_file': 'sqlmap_results'
+                'command': ['sqlmap', '-u', target['identifier'], '--batch', '--random-agent', '--output-dir', target_dir],
+                'output_file': os.path.join(target_dir, 'sqlmap_results')
             },
             'xsser': {
                 'command': ['xsser', '--url', target['identifier'], '--auto'],
-                'output_file': 'xsser_results.txt'
+                'output_file': os.path.join(target_dir, 'xsser_results.txt')
             }
         }
         
         def run_tool(tool_name, tool_config):
             try:
-                output_file = os.path.join(self.results_base_dir, tool_config['output_file'])
-                subprocess.run(tool_config['command'] + ['-o', output_file], check=True)
-                return tool_name, output_file
+                print(f"[+] Running {tool_name} for {target['identifier']}")
+                subprocess.run(tool_config['command'], check=True)
+                return tool_name, tool_config['output_file']
             except Exception as e:
-                print(f"[-] Error running {tool_name}: {str(e)}")
+                print(f"[-] Error running {tool_name} for {target['identifier']}: {str(e)}")
                 return tool_name, None
         
         # Run tools in parallel
@@ -331,10 +335,10 @@ class BugBountyScanner:
                 tool_name = future_to_tool[future]
                 try:
                     tool_name, output_file = future.result()
-                    if output_file:
+                    if output_file and os.path.exists(output_file):
                         results[tool_name] = output_file
                 except Exception as e:
-                    print(f"[-] Error with {tool_name}: {str(e)}")
+                    print(f"[-] Error with {tool_name} for {target['identifier']}: {str(e)}")
         
         return results
 
@@ -375,7 +379,8 @@ class BugBountyScanner:
             return {
                 'target': target['identifier'],
                 'status': 'completed',
-                'report_file': report_file
+                'report_file': report_file,
+                'target_dir': target_dir
             }
         except Exception as e:
             print(f"[-] Error scanning {target['identifier']}: {str(e)}")
@@ -587,16 +592,34 @@ class BugBountyScanner:
                 try:
                     result = future.result()
                     results.append(result)
+                    print(f"[+] Completed scanning {target['identifier']}")
                 except Exception as e:
                     print(f"[-] Error scanning {target['identifier']}: {str(e)}")
+                    results.append({
+                        'target': target['identifier'],
+                        'status': 'failed',
+                        'error': str(e)
+                    })
         
         # Generate comprehensive summary
         summary_file, readable_summary = self.generate_comprehensive_summary(results)
         
-        print("\nScan Summary:")
+        # Print final summary
+        print("\n=== Scan Summary ===")
         print(f"Results directory: {self.results_base_dir}")
-        print(f"JSON Summary: {summary_file}")
-        print(f"Human-readable Summary: {readable_summary}")
+        print(f"Total targets scanned: {len(self.targets)}")
+        print(f"Successfully scanned: {len([r for r in results if r['status'] == 'completed'])}")
+        print(f"Failed scans: {len([r for r in results if r['status'] == 'failed'])}")
+        print(f"\nDetailed results:")
+        for result in results:
+            if result['status'] == 'completed':
+                print(f"✓ {result['target']} - Results in {result['target_dir']}")
+            else:
+                print(f"✗ {result['target']} - Failed: {result.get('error', 'Unknown error')}")
+        
+        print(f"\nComprehensive summaries:")
+        print(f"- JSON summary: {summary_file}")
+        print(f"- Human-readable summary: {readable_summary}")
         
         return summary_file
 
