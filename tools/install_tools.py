@@ -19,11 +19,11 @@ class ToolInstaller:
             },
             'Arjun': {
                 'repo': 'https://github.com/s0md3v/Arjun',
-                'install_cmd': 'pip install -r requirements.txt'
+                'install_cmd': 'pipx install arjun'
             },
             'ParamSpider': {
                 'repo': 'https://github.com/devanshbatham/paramspider',
-                'install_cmd': 'pip install .'
+                'install_cmd': 'cd paramspider && pip install .'
             },
             'Waybackurls': {
                 'install_cmd': 'go install github.com/tomnomnom/waybackurls@latest'

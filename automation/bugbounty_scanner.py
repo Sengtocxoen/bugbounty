@@ -7,8 +7,6 @@ import json
 import yaml
 import requests
 import subprocess
-import venv
-import shutil
 import concurrent.futures
 from datetime import datetime
 from urllib.parse import urlparse, urljoin
@@ -20,75 +18,18 @@ sys.path.append(str(Path(__file__).parent.parent))
 from tools.tool_manager import ToolManager
 from tools.install_tools import ToolInstaller
 
-class VenvManager:
-    def __init__(self):
-        self.base_dir = Path(__file__).parent.parent
-        self.venv_dir = self.base_dir / 'venv'
-        self.requirements_file = self.base_dir / 'requirements.txt'
-        self.tools_dir = self.base_dir / 'tools'
-        self.tools_dir.mkdir(exist_ok=True)
-        self.activate_script = self.venv_dir / 'bin' / 'activate' if os.name != 'nt' else self.venv_dir / 'Scripts' / 'activate.bat'
-
-    def setup_venv(self):
-        """Set up virtual environment if needed"""
-        if not self.venv_dir.exists():
-            print("[+] Virtual environment not found. Creating one...")
-            try:
-                venv.create(self.venv_dir, with_pip=True)
-                print(f"[+] Virtual environment created at {self.venv_dir}")
-                self.install_requirements()
-            except Exception as e:
-                print(f"[-] Error creating virtual environment: {str(e)}")
-                return False
-        return True
-
-    def install_requirements(self):
-        """Install requirements in the virtual environment"""
-        print("[+] Installing requirements...")
-        try:
-            # Create requirements.txt if it doesn't exist
-            if not self.requirements_file.exists():
-                with open(self.requirements_file, 'w') as f:
-                    f.write("""requests>=2.31.0
-pyyaml>=6.0.1
-beautifulsoup4>=4.12.2
-colorama>=0.4.6
-tqdm>=4.66.1
-pipx>=1.2.0
-""")
-
-            # Install requirements using the virtual environment's pip
-            pip_path = self.venv_dir / 'bin' / 'pip' if os.name != 'nt' else self.venv_dir / 'Scripts' / 'pip.exe'
-            subprocess.run([str(pip_path), 'install', '-r', str(self.requirements_file)], check=True)
-            print("[+] Requirements installed successfully")
-            return True
-        except Exception as e:
-            print(f"[-] Error installing requirements: {str(e)}")
-            return False
-
-    def get_python_path(self):
-        """Get the path to the Python executable in the virtual environment"""
-        if os.name == 'nt':  # Windows
-            return self.venv_dir / 'Scripts' / 'python.exe'
-        return self.venv_dir / 'bin' / 'python'
-
-    def get_tool_path(self, tool_name):
-        """Get the path to a tool"""
-        if tool_name == 'XSStrike':
-            return self.tools_dir / 'XSStrike' / 'xsstrike.py'
-        elif tool_name == 'ParamSpider':
-            return self.tools_dir / 'paramspider' / 'paramspider.py'
-        return None
-
-    def run_in_venv(self, script_path, *args):
-        """Run a script in the virtual environment"""
-        python_path = self.get_python_path()
-        try:
-            subprocess.run([str(python_path), str(script_path)] + list(args), check=True)
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"[-] Error running script in virtual environment: {str(e)}")
-            return False
+def check_venv():
+    """Check if running in virtual environment"""
+    if not os.environ.get('VIRTUAL_ENV'):
+        print("[-] Warning: Not running in a virtual environment!")
+        print("[-] It is recommended to run this script in a virtual environment.")
+        print("[-] You can create and activate a virtual environment with:")
+        print("    python -m venv venv")
+        print("    source venv/bin/activate  # On Unix/macOS")
+        print("    venv\\Scripts\\activate    # On Windows")
+        response = input("Do you want to continue anyway? (y/N): ")
+        if response.lower() != 'y':
+            sys.exit(1)
 
 class BugBountyScanner:
     def __init__(self, csv_file=None, target=None, config_file=None):
@@ -329,7 +270,7 @@ class BugBountyScanner:
             print(f"[-] Error running Arjun: {str(e)}")
         
         # Try ParamSpider as backup
-        paramspider_path = self.venv_manager.get_tool_path('ParamSpider')
+        paramspider_path = self.get_tool_path('ParamSpider')
         if paramspider_path and not parameters:
             try:
                 print("[+] Running ParamSpider...")
@@ -368,7 +309,7 @@ class BugBountyScanner:
             print(f"[+] Found parameters: {', '.join(parameters)}")
         
         # Check for XSStrike
-        xsstrike_path = self.venv_manager.get_tool_path('XSStrike')
+        xsstrike_path = self.get_tool_path('XSStrike')
         if xsstrike_path:
             print(f"[+] Found XSStrike at {xsstrike_path}")
             try:
@@ -756,62 +697,40 @@ class BugBountyScanner:
         return summary_file
 
 def main():
-    # Initialize virtual environment manager
-    venv_manager = VenvManager()
+    # Check if running in virtual environment
+    check_venv()
     
-    # Set up virtual environment if needed
-    if not venv_manager.setup_venv():
-        print("[-] Failed to set up virtual environment")
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  For single target: python bugbounty_scanner.py -t <target_url>")
+        print("  For CSV file: python bugbounty_scanner.py -c <csv_file>")
+        print("  Optional: -f <config_file> for custom configuration")
         sys.exit(1)
 
-    # Initialize tool installer
-    tool_installer = ToolInstaller()
-    
-    # Install required tools
-    tool_installer.install_all_tools()
+    target = None
+    csv_file = None
+    config_file = None
 
-    # Get the path to the current script
-    current_script = Path(__file__)
+    i = 1
+    while i < len(sys.argv):
+        if sys.argv[i] == '-t':
+            target = sys.argv[i + 1]
+            i += 2
+        elif sys.argv[i] == '-c':
+            csv_file = sys.argv[i + 1]
+            i += 2
+        elif sys.argv[i] == '-f':
+            config_file = sys.argv[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    scanner = BugBountyScanner(csv_file=csv_file, target=target, config_file=config_file)
+    summary_file = scanner.run_scans()
     
-    # Run the script in the virtual environment
-    if not venv_manager.run_in_venv(current_script, *sys.argv[1:]):
-        sys.exit(1)
+    print("\nScan Summary:")
+    print(f"Results directory: {scanner.results_base_dir}")
+    print(f"Summary file: {summary_file}")
 
 if __name__ == "__main__":
-    # Check if we're running in the virtual environment
-    if not os.environ.get('VIRTUAL_ENV'):
-        # We're not in the virtual environment, so set it up and run the script again
-        main()
-    else:
-        # We're in the virtual environment, so run the actual scanner code
-        if len(sys.argv) < 2:
-            print("Usage:")
-            print("  For single target: python bugbounty_scanner.py -t <target_url>")
-            print("  For CSV file: python bugbounty_scanner.py -c <csv_file>")
-            print("  Optional: -f <config_file> for custom configuration")
-            sys.exit(1)
-
-        target = None
-        csv_file = None
-        config_file = None
-
-        i = 1
-        while i < len(sys.argv):
-            if sys.argv[i] == '-t':
-                target = sys.argv[i + 1]
-                i += 2
-            elif sys.argv[i] == '-c':
-                csv_file = sys.argv[i + 1]
-                i += 2
-            elif sys.argv[i] == '-f':
-                config_file = sys.argv[i + 1]
-                i += 2
-            else:
-                i += 1
-
-        scanner = BugBountyScanner(csv_file=csv_file, target=target, config_file=config_file)
-        summary_file = scanner.run_scans()
-        
-        print("\nScan Summary:")
-        print(f"Results directory: {scanner.results_base_dir}")
-        print(f"Summary file: {summary_file}") 
+    main() 
