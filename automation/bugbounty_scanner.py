@@ -13,11 +13,6 @@ from urllib.parse import urlparse, urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-# Import tool manager and installer
-sys.path.append(str(Path(__file__).parent.parent))
-from tools.tool_manager import ToolManager
-from tools.install_tools import ToolInstaller
-
 def check_venv():
     """Check if running in virtual environment"""
     if not os.environ.get('VIRTUAL_ENV'):
@@ -39,21 +34,6 @@ class BugBountyScanner:
         self.results_base_dir = f"scan_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         os.makedirs(self.results_base_dir, exist_ok=True)
         
-        # Initialize tool manager with GitHub URLs
-        self.tool_manager = ToolManager()
-        self.tool_urls = {
-            'XSStrike': 'https://github.com/s0md3v/XSStrike',
-            'Arjun': 'https://github.com/s0md3v/Arjun',
-            'ParamSpider': 'https://github.com/devanshbatham/ParamSpider',
-            'Gospider': 'https://github.com/jaeles-project/gospider'
-        }
-        
-        # Install required tools if not present
-        self.install_required_tools()
-        
-        # Check and install nuclei templates if needed
-        self.check_nuclei_templates()
-        
         # Default configuration if no config file is provided
         self.config = {
             'endpoints': [
@@ -70,8 +50,7 @@ class BugBountyScanner:
                 'request_timeout': 5,
                 'retry_attempts': 3,
                 'follow_redirects': True,
-                'max_workers': 10,
-                'waf_bypass': True
+                'max_workers': 10
             }
         }
         
@@ -86,6 +65,12 @@ class BugBountyScanner:
         elif target:
             self.targets = [{'identifier': self.normalize_url(target), 'asset_type': 'url'}]
 
+    def get_tool_path(self, tool_name):
+        """Get the path to a tool"""
+        tools_dir = Path(__file__).parent.parent / 'tools'
+        if tool_name == 'XSStrike':
+            return tools_dir / 'XSStrike' / 'xsstrike.py'
+        return None
 
     def normalize_url(self, url):
         """Add scheme to URL if missing"""
@@ -143,99 +128,6 @@ class BugBountyScanner:
         if row.get('eligible_for_bounty', 'false').lower() != 'true':
             return False
         return True
-
-    def check_endpoints(self, target):
-        """Check configured endpoints"""
-        print(f"[+] Checking endpoints for {target['identifier']}")
-        results = []
-        for endpoint in self.config.get('endpoints', []):
-            url = urljoin(target['identifier'].rstrip('/'), endpoint)
-            try:
-                response = requests.get(
-                    url,
-                    timeout=self.config['settings']['request_timeout'],
-                    allow_redirects=self.config['settings']['follow_redirects']
-                )
-                results.append({
-                    'url': url,
-                    'status': response.status_code,
-                    'headers': dict(response.headers)
-                })
-            except Exception as e:
-                print(f"[-] Error checking {url}: {str(e)}")
-        
-        return results
-
-    def check_auth(self, target):
-        """Check authentication mechanisms"""
-        print(f"[+] Checking auth mechanisms for {target['identifier']}")
-        results = []
-        for auth_endpoint in self.config.get('auth_endpoints', []):
-            url = urljoin(target['identifier'].rstrip('/'), auth_endpoint)
-            try:
-                response = requests.get(
-                    url,
-                    timeout=self.config['settings']['request_timeout'],
-                    allow_redirects=self.config['settings']['follow_redirects']
-                )
-                results.append({
-                    'url': url,
-                    'status': response.status_code,
-                    'content_type': response.headers.get('content-type', ''),
-                    'auth_headers': {k: v for k, v in response.headers.items() if 'auth' in k.lower()}
-                })
-            except Exception as e:
-                print(f"[-] Error checking {url}: {str(e)}")
-        
-        return results
-
-    def check_nuclei_templates(self):
-        """Check if nuclei templates are installed and install if needed"""
-        print("[+] Checking nuclei templates...")
-        try:
-            # Check if nuclei is installed
-            subprocess.run(["nuclei", "-version"], check=True, capture_output=True)
-            
-            # Check if templates directory exists in common locations
-            possible_template_dirs = [
-                os.path.expanduser("~/.local/nuclei-templates"),  # Default Kali location
-                os.path.expanduser("~/nuclei-templates"),         # Common location
-                "/usr/local/share/nuclei-templates",             # System-wide location
-                "/usr/share/nuclei-templates"                    # Alternative system location
-            ]
-            
-            self.templates_dir = None
-            for template_dir in possible_template_dirs:
-                if os.path.exists(template_dir):
-                    self.templates_dir = template_dir
-                    print(f"[+] Found nuclei templates in: {template_dir}")
-                    break
-            
-            if not self.templates_dir:
-                print("[+] Installing nuclei templates...")
-                self.templates_dir = os.path.expanduser("~/.local/nuclei-templates")
-                subprocess.run([
-                    "nuclei", "-update-templates"
-                ], check=True)
-                print("[+] Nuclei templates installed successfully")
-            
-        except subprocess.CalledProcessError as e:
-            print(f"[-] Error: {str(e)}")
-            print("[-] Please make sure nuclei is installed. You can install it with:")
-            print("    go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest")
-            sys.exit(1)
-        except Exception as e:
-            print(f"[-] Error checking nuclei templates: {str(e)}")
-            sys.exit(1)
-
-    def get_tool_path(self, tool_name):
-        """Get the path to a tool"""
-        tools_dir = Path(__file__).parent.parent / 'tools'
-        if tool_name == 'XSStrike':
-            return tools_dir / 'XSStrike' / 'xsstrike.py'
-        elif tool_name == 'ParamSpider':
-            return tools_dir / 'paramspider' / 'paramspider.py'
-        return None
 
     def discover_parameters(self, target):
         """Discover parameters using multiple tools"""
@@ -332,7 +224,6 @@ class BugBountyScanner:
                 'command': [
                     'nuclei',
                     '-u', target['identifier'],
-                    '-t', self.templates_dir,
                     '-severity', 'critical,high,medium',
                     '-c', '50',
                     '-bulk-size', '25',
@@ -464,46 +355,22 @@ class BugBountyScanner:
                 'error': str(e)
             }
 
-    def generate_comprehensive_summary(self, results):
-        """Generate a comprehensive summary of interesting findings"""
-        print("[+] Generating comprehensive summary...")
+    def generate_tool_report(self, results):
+        """Generate a report of tool findings"""
+        print("[+] Generating tool report...")
         
-        summary = {
+        report = {
             'scan_time': datetime.now().isoformat(),
             'total_targets': len(self.targets),
             'completed_scans': len([r for r in results if r['status'] == 'completed']),
             'failed_scans': len([r for r in results if r['status'] == 'failed']),
-            'interesting_findings': {
-                'non_standard_responses': [],
-                'potential_vulnerabilities': [],
-                'sensitive_endpoints': [],
-                'interesting_headers': [],
-                'potential_issues': []
+            'findings': {
+                'nuclei': [],
+                'sqlmap': [],
+                'xsstrike': [],
+                'gospider': []
             }
         }
-        
-        # Interesting response codes to highlight
-        interesting_codes = [200, 201, 202, 203, 204, 205, 206, 300, 301, 302, 303, 307, 308, 401, 403, 405, 500, 501, 502, 503]
-        
-        # Sensitive keywords in URLs/paths
-        sensitive_keywords = [
-            'admin', 'api', 'auth', 'backup', 'config', 'debug', 'dev', 'git', 'jenkins',
-            'login', 'manage', 'php', 'sql', 'test', 'upload', 'wp-', 'wp-content',
-            'wp-admin', 'wp-includes', 'wordpress', 'adminer', 'phpmyadmin', 'mysql',
-            'database', 'db', 'backup', 'bak', 'old', 'temp', 'tmp', 'log', 'logs',
-            'config', 'conf', 'setting', 'settings', 'install', 'setup', 'update',
-            'upgrade', 'vendor', 'node_modules', 'bower_components', 'composer',
-            'package.json', 'package-lock.json', 'yarn.lock', '.env', '.git',
-            '.svn', '.htaccess', 'web.config', 'robots.txt', 'sitemap.xml'
-        ]
-        
-        # Interesting headers to check
-        interesting_headers = [
-            'server', 'x-powered-by', 'x-aspnet-version', 'x-aspnetmvc-version',
-            'x-frame-options', 'x-content-type-options', 'x-xss-protection',
-            'content-security-policy', 'strict-transport-security', 'x-cache',
-            'x-cdn', 'cf-ray', 'x-waf', 'x-shield', 'x-protection'
-        ]
         
         for result in results:
             if result['status'] != 'completed':
@@ -516,7 +383,7 @@ class BugBountyScanner:
                 with open(report_file, 'r') as f:
                     report_data = json.load(f)
                 
-                # Check security tools results
+                # Process tool results
                 security_tools = report_data.get('security_tools', {})
                 for tool, output_file in security_tools.items():
                     if os.path.exists(output_file):
@@ -524,115 +391,98 @@ class BugBountyScanner:
                             with open(output_file, 'r') as f:
                                 tool_results = json.load(f)
                                 
-                            # Add potential vulnerabilities
+                            # Process Nuclei results
                             if tool == 'nuclei':
                                 for finding in tool_results:
-                                    if finding.get('severity') in ['high', 'critical']:
-                                        summary['interesting_findings']['potential_vulnerabilities'].append({
+                                    if finding.get('severity') in ['high', 'critical', 'medium']:
+                                        report['findings']['nuclei'].append({
                                             'target': target,
-                                            'tool': tool,
-                                            'finding': finding
+                                            'severity': finding.get('severity'),
+                                            'name': finding.get('info', {}).get('name'),
+                                            'description': finding.get('info', {}).get('description'),
+                                            'url': finding.get('matched-at')
                                         })
                             
-                            # Add SQL injection findings
+                            # Process SQLMap results
                             elif tool == 'sqlmap':
-                                if 'vulnerabilities' in tool_results:
-                                    summary['interesting_findings']['potential_vulnerabilities'].append({
+                                if isinstance(tool_results, dict) and 'vulnerabilities' in tool_results:
+                                    report['findings']['sqlmap'].append({
                                         'target': target,
-                                        'tool': tool,
-                                        'finding': tool_results['vulnerabilities']
+                                        'vulnerabilities': tool_results['vulnerabilities']
                                     })
                             
-                            # Add XSS findings
+                            # Process XSStrike results
                             elif tool == 'xsstrike':
-                                if 'vulnerabilities' in tool_results:
-                                    summary['interesting_findings']['potential_vulnerabilities'].append({
+                                if isinstance(tool_results, dict) and 'vulnerabilities' in tool_results:
+                                    report['findings']['xsstrike'].append({
                                         'target': target,
-                                        'tool': tool,
-                                        'finding': tool_results['vulnerabilities']
+                                        'vulnerabilities': tool_results['vulnerabilities']
                                     })
-                        except:
+                            
+                            # Process Gospider results
+                            elif tool == 'gospider':
+                                if isinstance(tool_results, list):
+                                    report['findings']['gospider'].append({
+                                        'target': target,
+                                        'urls': tool_results
+                                    })
+                        except Exception as e:
+                            print(f"[-] Error processing {tool} results for {target}: {str(e)}")
                             continue
-                
-                # Check for non-standard responses
-                if 'endpoints' in report_data:
-                    for endpoint in report_data['endpoints']:
-                        if endpoint.get('status') in interesting_codes:
-                            summary['interesting_findings']['non_standard_responses'].append({
-                                'target': target,
-                                'url': endpoint['url'],
-                                'status': endpoint['status'],
-                                'headers': endpoint.get('headers', {})
-                            })
-                
-                # Check for sensitive endpoints
-                for keyword in sensitive_keywords:
-                    if keyword in target.lower():
-                        summary['interesting_findings']['sensitive_endpoints'].append({
-                            'target': target,
-                            'keyword': keyword
-                        })
-                
-                # Check for interesting headers
-                if 'headers' in report_data:
-                    for header in interesting_headers:
-                        if header in report_data['headers']:
-                            summary['interesting_findings']['interesting_headers'].append({
-                                'target': target,
-                                'header': header,
-                                'value': report_data['headers'][header]
-                            })
                 
             except Exception as e:
                 print(f"[-] Error processing report for {target}: {str(e)}")
         
-        # Generate summary files
-        summary_file = os.path.join(self.results_base_dir, 'comprehensive_summary.json')
-        with open(summary_file, 'w') as f:
-            json.dump(summary, f, indent=4)
+        # Generate report files
+        report_file = os.path.join(self.results_base_dir, 'tool_report.json')
+        with open(report_file, 'w') as f:
+            json.dump(report, f, indent=4)
         
-        # Generate human-readable summary
-        readable_summary = os.path.join(self.results_base_dir, 'comprehensive_summary.txt')
-        with open(readable_summary, 'w') as f:
-            f.write("=== Bug Bounty Scanner Comprehensive Summary ===\n\n")
-            f.write(f"Scan Time: {summary['scan_time']}\n")
-            f.write(f"Total Targets: {summary['total_targets']}\n")
-            f.write(f"Completed Scans: {summary['completed_scans']}\n")
-            f.write(f"Failed Scans: {summary['failed_scans']}\n\n")
+        # Generate human-readable report
+        readable_report = os.path.join(self.results_base_dir, 'tool_report.txt')
+        with open(readable_report, 'w') as f:
+            f.write("=== Bug Bounty Scanner Tool Report ===\n\n")
+            f.write(f"Scan Time: {report['scan_time']}\n")
+            f.write(f"Total Targets: {report['total_targets']}\n")
+            f.write(f"Completed Scans: {report['completed_scans']}\n")
+            f.write(f"Failed Scans: {report['failed_scans']}\n\n")
             
-            # Potential Vulnerabilities
-            f.write("=== Potential Vulnerabilities ===\n")
-            for vuln in summary['interesting_findings']['potential_vulnerabilities']:
-                f.write(f"Target: {vuln['target']}\n")
-                f.write(f"Tool: {vuln['tool']}\n")
-                f.write(f"Finding: {json.dumps(vuln['finding'], indent=2)}\n\n")
+            # Nuclei Findings
+            f.write("=== Nuclei Findings ===\n")
+            for finding in report['findings']['nuclei']:
+                f.write(f"Target: {finding['target']}\n")
+                f.write(f"Severity: {finding['severity']}\n")
+                f.write(f"Name: {finding['name']}\n")
+                f.write(f"Description: {finding['description']}\n")
+                f.write(f"URL: {finding['url']}\n\n")
             
-            # Non-Standard Responses
-            f.write("=== Non-Standard Responses ===\n")
-            for response in summary['interesting_findings']['non_standard_responses']:
-                f.write(f"Target: {response['target']}\n")
-                f.write(f"URL: {response['url']}\n")
-                f.write(f"Status: {response['status']}\n")
-                f.write(f"Headers: {json.dumps(response['headers'], indent=2)}\n\n")
+            # SQLMap Findings
+            f.write("=== SQLMap Findings ===\n")
+            for finding in report['findings']['sqlmap']:
+                f.write(f"Target: {finding['target']}\n")
+                f.write(f"Vulnerabilities: {json.dumps(finding['vulnerabilities'], indent=2)}\n\n")
             
-            # Sensitive Endpoints
-            f.write("=== Sensitive Endpoints ===\n")
-            for endpoint in summary['interesting_findings']['sensitive_endpoints']:
-                f.write(f"Target: {endpoint['target']}\n")
-                f.write(f"Keyword: {endpoint['keyword']}\n\n")
+            # XSStrike Findings
+            f.write("=== XSStrike Findings ===\n")
+            for finding in report['findings']['xsstrike']:
+                f.write(f"Target: {finding['target']}\n")
+                f.write(f"Vulnerabilities: {json.dumps(finding['vulnerabilities'], indent=2)}\n\n")
             
-            # Interesting Headers
-            f.write("=== Interesting Headers ===\n")
-            for header in summary['interesting_findings']['interesting_headers']:
-                f.write(f"Target: {header['target']}\n")
-                f.write(f"Header: {header['header']}\n")
-                f.write(f"Value: {header['value']}\n\n")
+            # Gospider Findings
+            f.write("=== Gospider Findings ===\n")
+            for finding in report['findings']['gospider']:
+                f.write(f"Target: {finding['target']}\n")
+                f.write(f"Discovered URLs: {len(finding['urls'])}\n")
+                f.write("Sample URLs:\n")
+                for url in finding['urls'][:10]:  # Show first 10 URLs
+                    f.write(f"- {url}\n")
+                f.write("\n")
         
-        print(f"[+] Comprehensive summary generated:")
-        print(f"    - JSON summary: {summary_file}")
-        print(f"    - Human-readable summary: {readable_summary}")
+        print(f"[+] Tool report generated:")
+        print(f"    - JSON report: {report_file}")
+        print(f"    - Human-readable report: {readable_report}")
         
-        return summary_file, readable_summary
+        return report_file, readable_report
 
     def run_scans(self):
         """Run scans for all targets in parallel"""
@@ -659,8 +509,8 @@ class BugBountyScanner:
                         'error': str(e)
                     })
         
-        # Generate comprehensive summary
-        summary_file, readable_summary = self.generate_comprehensive_summary(results)
+        # Generate tool report
+        report_file, readable_report = self.generate_tool_report(results)
         
         # Print final summary
         print("\n=== Scan Summary ===")
@@ -675,11 +525,11 @@ class BugBountyScanner:
             else:
                 print(f"✗ {result['target']} - Failed: {result.get('error', 'Unknown error')}")
         
-        print(f"\nComprehensive summaries:")
-        print(f"- JSON summary: {summary_file}")
-        print(f"- Human-readable summary: {readable_summary}")
+        print(f"\nTool reports:")
+        print(f"- JSON report: {report_file}")
+        print(f"- Human-readable report: {readable_report}")
         
-        return summary_file
+        return self.results_base_dir
 
 def main():
     # Check if running in virtual environment
@@ -711,11 +561,10 @@ def main():
             i += 1
 
     scanner = BugBountyScanner(csv_file=csv_file, target=target, config_file=config_file)
-    summary_file = scanner.run_scans()
+    results_dir = scanner.run_scans()
     
     print("\nScan Summary:")
-    print(f"Results directory: {scanner.results_base_dir}")
-    print(f"Summary file: {summary_file}")
+    print(f"Results directory: {results_dir}")
 
 if __name__ == "__main__":
     main() 
