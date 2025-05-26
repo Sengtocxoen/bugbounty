@@ -507,9 +507,6 @@ class BugBountyScanner:
             json.dump(target, f, indent=4)
         
         try:
-            # Check for WAF
-            waf_results = self.check_waf(target)
-            
             # Run security tools in parallel
             security_results = self.run_security_tools(target)
             
@@ -517,7 +514,6 @@ class BugBountyScanner:
             results = {
                 'target': target['identifier'],
                 'scan_time': datetime.now().isoformat(),
-                'waf_detection': waf_results,
                 'security_tools': security_results
             }
             
@@ -552,7 +548,6 @@ class BugBountyScanner:
             'completed_scans': len([r for r in results if r['status'] == 'completed']),
             'failed_scans': len([r for r in results if r['status'] == 'failed']),
             'interesting_findings': {
-                'waf_detected': [],
                 'non_standard_responses': [],
                 'potential_vulnerabilities': [],
                 'sensitive_endpoints': [],
@@ -594,14 +589,6 @@ class BugBountyScanner:
             try:
                 with open(report_file, 'r') as f:
                     report_data = json.load(f)
-                
-                # Check WAF detection
-                if report_data.get('waf_detection', {}).get('detected'):
-                    summary['interesting_findings']['waf_detected'].append({
-                        'target': target,
-                        'type': report_data['waf_detection']['type'],
-                        'bypass_successful': report_data['waf_detection']['bypass_successful']
-                    })
                 
                 # Check security tools results
                 security_tools = report_data.get('security_tools', {})
@@ -686,13 +673,6 @@ class BugBountyScanner:
             f.write(f"Total Targets: {summary['total_targets']}\n")
             f.write(f"Completed Scans: {summary['completed_scans']}\n")
             f.write(f"Failed Scans: {summary['failed_scans']}\n\n")
-            
-            # WAF Detection
-            f.write("=== WAF Detection ===\n")
-            for waf in summary['interesting_findings']['waf_detected']:
-                f.write(f"Target: {waf['target']}\n")
-                f.write(f"WAF Type: {waf['type']}\n")
-                f.write(f"Bypass Successful: {waf['bypass_successful']}\n\n")
             
             # Potential Vulnerabilities
             f.write("=== Potential Vulnerabilities ===\n")
