@@ -7,9 +7,10 @@ import json
 import yaml
 import requests
 import subprocess
+import concurrent.futures
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, urljoin
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class BugBountyScanner:
     def __init__(self, csv_file=None, target=None, config_file=None):
@@ -33,14 +34,13 @@ class BugBountyScanner:
                 '/login', '/register', '/reset-password',
                 '/oauth/authorize', '/oauth/token'
             ],
-            'nuclei_templates': [
-                'cves/', 'exposures/', 'misconfiguration/', 'vulnerabilities/'
-            ],
             'settings': {
                 'max_concurrent_requests': 5,
                 'request_timeout': 5,
                 'retry_attempts': 3,
-                'follow_redirects': True
+                'follow_redirects': True,
+                'max_workers': 10,  # Number of parallel workers
+                'waf_bypass': True  # Enable WAF bypass techniques
             }
         }
         
@@ -203,10 +203,6 @@ class BugBountyScanner:
         
         # Define template categories based on official nuclei-templates repository structure
         template_categories = {
-            'cves': 'cves/',
-            'exposures': 'exposures/',
-            'misconfiguration': 'misconfiguration/',
-            'vulnerabilities': 'vulnerabilities/',
             'http': 'http/',
             'dns': 'dns/',
             'file': 'file/',
@@ -219,26 +215,126 @@ class BugBountyScanner:
             'cloud': 'cloud/'
         }
         
-        for category, template_path in template_categories.items():
+        # Run all templates at once for better efficiency
+        try:
+            output_file = os.path.join(self.results_base_dir, f"nuclei_results.json")
+            print(f"[+] Running nuclei scan...")
+            subprocess.run([
+                "nuclei",
+                "-u", target['identifier'],
+                "-t", self.templates_dir,
+                "-o", output_file,
+                "-j"  # Use -j for JSON output
+            ], check=True)
+            results.append(output_file)
+        except Exception as e:
+            print(f"[-] Error running nuclei scan: {str(e)}")
+        
+        return results
+
+    def check_waf(self, target):
+        """Check for WAF and try to bypass"""
+        print(f"[+] Checking WAF for {target['identifier']}")
+        waf_results = {
+            'detected': False,
+            'type': None,
+            'bypass_attempted': False,
+            'bypass_successful': False
+        }
+        
+        # Common WAF detection headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'close',
+            'Upgrade-Insecure-Requests': '1'
+        }
+        
+        try:
+            # Test for WAF
+            response = requests.get(target['identifier'], headers=headers, timeout=5)
+            waf_headers = ['x-waf', 'x-cdn', 'cf-ray', 'x-shield', 'x-protection']
+            
+            for header in waf_headers:
+                if header in response.headers:
+                    waf_results['detected'] = True
+                    waf_results['type'] = header
+                    break
+            
+            # If WAF detected, try bypass techniques
+            if waf_results['detected'] and self.config['settings']['waf_bypass']:
+                waf_results['bypass_attempted'] = True
+                
+                # Try different bypass techniques
+                bypass_headers = [
+                    {'X-Forwarded-For': '127.0.0.1'},
+                    {'X-Originating-IP': '127.0.0.1'},
+                    {'X-Remote-IP': '127.0.0.1'},
+                    {'X-Remote-Addr': '127.0.0.1'}
+                ]
+                
+                for bypass_header in bypass_headers:
+                    try:
+                        headers.update(bypass_header)
+                        bypass_response = requests.get(target['identifier'], headers=headers, timeout=5)
+                        if bypass_response.status_code == 200:
+                            waf_results['bypass_successful'] = True
+                            break
+                    except:
+                        continue
+                
+        except Exception as e:
+            print(f"[-] Error checking WAF: {str(e)}")
+        
+        return waf_results
+
+    def run_security_tools(self, target):
+        """Run various security tools in parallel"""
+        print(f"[+] Running security tools for {target['identifier']}")
+        results = {}
+        
+        # Define tools and their commands
+        tools = {
+            'nuclei': {
+                'command': ['nuclei', '-u', target['identifier'], '-t', self.templates_dir, '-j'],
+                'output_file': 'nuclei_results.json'
+            },
+            'sqlmap': {
+                'command': ['sqlmap', '-u', target['identifier'], '--batch', '--random-agent', '--output-dir', self.results_base_dir],
+                'output_file': 'sqlmap_results'
+            },
+            'xsser': {
+                'command': ['xsser', '--url', target['identifier'], '--auto'],
+                'output_file': 'xsser_results.txt'
+            }
+        }
+        
+        def run_tool(tool_name, tool_config):
             try:
-                output_file = os.path.join(self.results_base_dir, f"nuclei_{category}.json")
-                full_template_path = os.path.join(self.templates_dir, template_path)
-                
-                if not os.path.exists(full_template_path):
-                    print(f"[-] Template path not found: {full_template_path}")
-                    continue
-                
-                print(f"[+] Running {category} templates...")
-                subprocess.run([
-                    "nuclei",
-                    "-u", target['identifier'],
-                    "-t", full_template_path,
-                    "-o", output_file,
-                    "-j"  # Use -j for JSON output
-                ], check=True)
-                results.append(output_file)
+                output_file = os.path.join(self.results_base_dir, tool_config['output_file'])
+                subprocess.run(tool_config['command'] + ['-o', output_file], check=True)
+                return tool_name, output_file
             except Exception as e:
-                print(f"[-] Error running nuclei template {category}: {str(e)}")
+                print(f"[-] Error running {tool_name}: {str(e)}")
+                return tool_name, None
+        
+        # Run tools in parallel
+        with ThreadPoolExecutor(max_workers=self.config['settings']['max_workers']) as executor:
+            future_to_tool = {
+                executor.submit(run_tool, tool_name, tool_config): tool_name
+                for tool_name, tool_config in tools.items()
+            }
+            
+            for future in as_completed(future_to_tool):
+                tool_name = future_to_tool[future]
+                try:
+                    tool_name, output_file = future.result()
+                    if output_file:
+                        results[tool_name] = output_file
+                except Exception as e:
+                    print(f"[-] Error with {tool_name}: {str(e)}")
         
         return results
 
@@ -255,18 +351,18 @@ class BugBountyScanner:
             json.dump(target, f, indent=4)
         
         try:
-            # Run all checks
-            endpoints_results = self.check_endpoints(target)
-            auth_results = self.check_auth(target)
-            nuclei_results = self.run_nuclei_templates(target)
+            # Check for WAF
+            waf_results = self.check_waf(target)
+            
+            # Run security tools in parallel
+            security_results = self.run_security_tools(target)
             
             # Save results
             results = {
                 'target': target['identifier'],
                 'scan_time': datetime.now().isoformat(),
-                'endpoints': endpoints_results,
-                'auth_mechanisms': auth_results,
-                'nuclei_results': nuclei_results
+                'waf_detection': waf_results,
+                'security_tools': security_results
             }
             
             report_file = os.path.join(target_dir, 'report.json')
@@ -289,29 +385,219 @@ class BugBountyScanner:
                 'error': str(e)
             }
 
-    def run_scans(self):
-        """Run scans for all targets"""
-        print(f"[+] Found {len(self.targets)} targets to scan")
+    def generate_comprehensive_summary(self, results):
+        """Generate a comprehensive summary of interesting findings"""
+        print("[+] Generating comprehensive summary...")
         
-        results = []
-        for target in self.targets:
-            result = self.scan_target(target)
-            results.append(result)
-        
-        # Generate summary report
         summary = {
             'scan_time': datetime.now().isoformat(),
             'total_targets': len(self.targets),
             'completed_scans': len([r for r in results if r['status'] == 'completed']),
             'failed_scans': len([r for r in results if r['status'] == 'failed']),
-            'results': results
+            'interesting_findings': {
+                'waf_detected': [],
+                'non_standard_responses': [],
+                'potential_vulnerabilities': [],
+                'sensitive_endpoints': [],
+                'interesting_headers': [],
+                'potential_issues': []
+            }
         }
         
-        summary_file = os.path.join(self.results_base_dir, 'scan_summary.json')
+        # Interesting response codes to highlight
+        interesting_codes = [200, 201, 202, 203, 204, 205, 206, 300, 301, 302, 303, 307, 308, 401, 403, 405, 500, 501, 502, 503]
+        
+        # Sensitive keywords in URLs/paths
+        sensitive_keywords = [
+            'admin', 'api', 'auth', 'backup', 'config', 'debug', 'dev', 'git', 'jenkins',
+            'login', 'manage', 'php', 'sql', 'test', 'upload', 'wp-', 'wp-content',
+            'wp-admin', 'wp-includes', 'wordpress', 'adminer', 'phpmyadmin', 'mysql',
+            'database', 'db', 'backup', 'bak', 'old', 'temp', 'tmp', 'log', 'logs',
+            'config', 'conf', 'setting', 'settings', 'install', 'setup', 'update',
+            'upgrade', 'vendor', 'node_modules', 'bower_components', 'composer',
+            'package.json', 'package-lock.json', 'yarn.lock', '.env', '.git',
+            '.svn', '.htaccess', 'web.config', 'robots.txt', 'sitemap.xml'
+        ]
+        
+        # Interesting headers to check
+        interesting_headers = [
+            'server', 'x-powered-by', 'x-aspnet-version', 'x-aspnetmvc-version',
+            'x-frame-options', 'x-content-type-options', 'x-xss-protection',
+            'content-security-policy', 'strict-transport-security', 'x-cache',
+            'x-cdn', 'cf-ray', 'x-waf', 'x-shield', 'x-protection'
+        ]
+        
+        for result in results:
+            if result['status'] != 'completed':
+                continue
+                
+            target = result['target']
+            report_file = result['report_file']
+            
+            try:
+                with open(report_file, 'r') as f:
+                    report_data = json.load(f)
+                
+                # Check WAF detection
+                if report_data.get('waf_detection', {}).get('detected'):
+                    summary['interesting_findings']['waf_detected'].append({
+                        'target': target,
+                        'type': report_data['waf_detection']['type'],
+                        'bypass_successful': report_data['waf_detection']['bypass_successful']
+                    })
+                
+                # Check security tools results
+                security_tools = report_data.get('security_tools', {})
+                for tool, output_file in security_tools.items():
+                    if os.path.exists(output_file):
+                        try:
+                            with open(output_file, 'r') as f:
+                                tool_results = json.load(f)
+                                
+                            # Add potential vulnerabilities
+                            if tool == 'nuclei':
+                                for finding in tool_results:
+                                    if finding.get('severity') in ['high', 'critical']:
+                                        summary['interesting_findings']['potential_vulnerabilities'].append({
+                                            'target': target,
+                                            'tool': tool,
+                                            'finding': finding
+                                        })
+                            
+                            # Add SQL injection findings
+                            elif tool == 'sqlmap':
+                                if 'vulnerabilities' in tool_results:
+                                    summary['interesting_findings']['potential_vulnerabilities'].append({
+                                        'target': target,
+                                        'tool': tool,
+                                        'finding': tool_results['vulnerabilities']
+                                    })
+                            
+                            # Add XSS findings
+                            elif tool == 'xsser':
+                                if 'vulnerabilities' in tool_results:
+                                    summary['interesting_findings']['potential_vulnerabilities'].append({
+                                        'target': target,
+                                        'tool': tool,
+                                        'finding': tool_results['vulnerabilities']
+                                    })
+                        except:
+                            continue
+                
+                # Check for non-standard responses
+                if 'endpoints' in report_data:
+                    for endpoint in report_data['endpoints']:
+                        if endpoint.get('status') in interesting_codes:
+                            summary['interesting_findings']['non_standard_responses'].append({
+                                'target': target,
+                                'url': endpoint['url'],
+                                'status': endpoint['status'],
+                                'headers': endpoint.get('headers', {})
+                            })
+                
+                # Check for sensitive endpoints
+                for keyword in sensitive_keywords:
+                    if keyword in target.lower():
+                        summary['interesting_findings']['sensitive_endpoints'].append({
+                            'target': target,
+                            'keyword': keyword
+                        })
+                
+                # Check for interesting headers
+                if 'headers' in report_data:
+                    for header in interesting_headers:
+                        if header in report_data['headers']:
+                            summary['interesting_findings']['interesting_headers'].append({
+                                'target': target,
+                                'header': header,
+                                'value': report_data['headers'][header]
+                            })
+                
+            except Exception as e:
+                print(f"[-] Error processing report for {target}: {str(e)}")
+        
+        # Generate summary files
+        summary_file = os.path.join(self.results_base_dir, 'comprehensive_summary.json')
         with open(summary_file, 'w') as f:
             json.dump(summary, f, indent=4)
         
-        print(f"\n[+] All scans completed. Summary saved to {summary_file}")
+        # Generate human-readable summary
+        readable_summary = os.path.join(self.results_base_dir, 'comprehensive_summary.txt')
+        with open(readable_summary, 'w') as f:
+            f.write("=== Bug Bounty Scanner Comprehensive Summary ===\n\n")
+            f.write(f"Scan Time: {summary['scan_time']}\n")
+            f.write(f"Total Targets: {summary['total_targets']}\n")
+            f.write(f"Completed Scans: {summary['completed_scans']}\n")
+            f.write(f"Failed Scans: {summary['failed_scans']}\n\n")
+            
+            # WAF Detection
+            f.write("=== WAF Detection ===\n")
+            for waf in summary['interesting_findings']['waf_detected']:
+                f.write(f"Target: {waf['target']}\n")
+                f.write(f"WAF Type: {waf['type']}\n")
+                f.write(f"Bypass Successful: {waf['bypass_successful']}\n\n")
+            
+            # Potential Vulnerabilities
+            f.write("=== Potential Vulnerabilities ===\n")
+            for vuln in summary['interesting_findings']['potential_vulnerabilities']:
+                f.write(f"Target: {vuln['target']}\n")
+                f.write(f"Tool: {vuln['tool']}\n")
+                f.write(f"Finding: {json.dumps(vuln['finding'], indent=2)}\n\n")
+            
+            # Non-Standard Responses
+            f.write("=== Non-Standard Responses ===\n")
+            for response in summary['interesting_findings']['non_standard_responses']:
+                f.write(f"Target: {response['target']}\n")
+                f.write(f"URL: {response['url']}\n")
+                f.write(f"Status: {response['status']}\n")
+                f.write(f"Headers: {json.dumps(response['headers'], indent=2)}\n\n")
+            
+            # Sensitive Endpoints
+            f.write("=== Sensitive Endpoints ===\n")
+            for endpoint in summary['interesting_findings']['sensitive_endpoints']:
+                f.write(f"Target: {endpoint['target']}\n")
+                f.write(f"Keyword: {endpoint['keyword']}\n\n")
+            
+            # Interesting Headers
+            f.write("=== Interesting Headers ===\n")
+            for header in summary['interesting_findings']['interesting_headers']:
+                f.write(f"Target: {header['target']}\n")
+                f.write(f"Header: {header['header']}\n")
+                f.write(f"Value: {header['value']}\n\n")
+        
+        print(f"[+] Comprehensive summary generated:")
+        print(f"    - JSON summary: {summary_file}")
+        print(f"    - Human-readable summary: {readable_summary}")
+        
+        return summary_file, readable_summary
+
+    def run_scans(self):
+        """Run scans for all targets in parallel"""
+        print(f"[+] Found {len(self.targets)} targets to scan")
+        
+        results = []
+        with ThreadPoolExecutor(max_workers=self.config['settings']['max_workers']) as executor:
+            future_to_target = {
+                executor.submit(self.scan_target, target): target
+                for target in self.targets
+            }
+            
+            for future in as_completed(future_to_target):
+                target = future_to_target[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    print(f"[-] Error scanning {target['identifier']}: {str(e)}")
+        
+        # Generate comprehensive summary
+        summary_file, readable_summary = self.generate_comprehensive_summary(results)
+        
+        print("\nScan Summary:")
+        print(f"Results directory: {self.results_base_dir}")
+        print(f"JSON Summary: {summary_file}")
+        print(f"Human-readable Summary: {readable_summary}")
+        
         return summary_file
 
 def main():
