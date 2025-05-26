@@ -7,10 +7,76 @@ import json
 import yaml
 import requests
 import subprocess
+import venv
+import shutil
 import concurrent.futures
 from datetime import datetime
 from urllib.parse import urlparse, urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+# Import tool manager
+sys.path.append(str(Path(__file__).parent.parent))
+from tools.tool_manager import ToolManager
+
+class VenvManager:
+    def __init__(self):
+        self.base_dir = Path(__file__).parent.parent
+        self.venv_dir = self.base_dir / 'venv'
+        self.requirements_file = self.base_dir / 'requirements.txt'
+        self.activate_script = self.venv_dir / 'bin' / 'activate' if os.name != 'nt' else self.venv_dir / 'Scripts' / 'activate.bat'
+
+    def setup_venv(self):
+        """Set up virtual environment if needed"""
+        if not self.venv_dir.exists():
+            print("[+] Virtual environment not found. Creating one...")
+            try:
+                venv.create(self.venv_dir, with_pip=True)
+                print(f"[+] Virtual environment created at {self.venv_dir}")
+                self.install_requirements()
+            except Exception as e:
+                print(f"[-] Error creating virtual environment: {str(e)}")
+                return False
+        return True
+
+    def install_requirements(self):
+        """Install requirements in the virtual environment"""
+        print("[+] Installing requirements...")
+        try:
+            # Create requirements.txt if it doesn't exist
+            if not self.requirements_file.exists():
+                with open(self.requirements_file, 'w') as f:
+                    f.write("""requests>=2.31.0
+pyyaml>=6.0.1
+beautifulsoup4>=4.12.2
+colorama>=0.4.6
+tqdm>=4.66.1
+""")
+
+            # Install requirements using the virtual environment's pip
+            pip_path = self.venv_dir / 'bin' / 'pip' if os.name != 'nt' else self.venv_dir / 'Scripts' / 'pip.exe'
+            subprocess.run([str(pip_path), 'install', '-r', str(self.requirements_file)], check=True)
+            print("[+] Requirements installed successfully")
+            return True
+        except Exception as e:
+            print(f"[-] Error installing requirements: {str(e)}")
+            return False
+
+    def get_python_path(self):
+        """Get the path to the Python executable in the virtual environment"""
+        if os.name == 'nt':  # Windows
+            return self.venv_dir / 'Scripts' / 'python.exe'
+        return self.venv_dir / 'bin' / 'python'
+
+    def run_in_venv(self, script_path, *args):
+        """Run a script in the virtual environment"""
+        python_path = self.get_python_path()
+        try:
+            subprocess.run([str(python_path), str(script_path)] + list(args), check=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"[-] Error running script in virtual environment: {str(e)}")
+            return False
 
 class BugBountyScanner:
     def __init__(self, csv_file=None, target=None, config_file=None):
@@ -19,6 +85,19 @@ class BugBountyScanner:
         self.config_file = config_file
         self.results_base_dir = f"scan_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         os.makedirs(self.results_base_dir, exist_ok=True)
+        
+        # Initialize tool manager with GitHub URLs
+        self.tool_manager = ToolManager()
+        self.tool_urls = {
+            'XSStrike': 'https://github.com/s0md3v/XSStrike',
+            'Arjun': 'https://github.com/s0md3v/Arjun',
+            'ParamSpider': 'https://github.com/devanshbatham/ParamSpider',
+            'Waybackurls': 'https://github.com/tomnomnom/waybackurls',
+            'Gospider': 'https://github.com/jaeles-project/gospider'
+        }
+        
+        # Install required tools if not present
+        self.install_required_tools()
         
         # Check and install nuclei templates if needed
         self.check_nuclei_templates()
@@ -39,8 +118,8 @@ class BugBountyScanner:
                 'request_timeout': 5,
                 'retry_attempts': 3,
                 'follow_redirects': True,
-                'max_workers': 10,  # Number of parallel workers
-                'waf_bypass': True  # Enable WAF bypass techniques
+                'max_workers': 10,
+                'waf_bypass': True
             }
         }
         
@@ -54,6 +133,21 @@ class BugBountyScanner:
             self.targets = self.load_targets_from_csv()
         elif target:
             self.targets = [{'identifier': self.normalize_url(target), 'asset_type': 'url'}]
+
+    def install_required_tools(self):
+        """Install required tools if not present"""
+        print("[+] Checking and installing required tools...")
+        for tool_name, repo_url in self.tool_urls.items():
+            if not self.tool_manager.get_tool_path(tool_name):
+                print(f"[+] Installing {tool_name}...")
+                install_cmd = None
+                if tool_name == 'XSStrike':
+                    install_cmd = "pip install -r requirements.txt"
+                elif tool_name == 'Arjun':
+                    install_cmd = "pip install -r requirements.txt"
+                elif tool_name == 'ParamSpider':
+                    install_cmd = "pip install -r requirements.txt"
+                self.tool_manager.install_tool(tool_name, repo_url, install_cmd)
 
     def normalize_url(self, url):
         """Add scheme to URL if missing"""
@@ -196,99 +290,54 @@ class BugBountyScanner:
             print(f"[-] Error checking nuclei templates: {str(e)}")
             sys.exit(1)
 
-    def run_nuclei_templates(self, target):
-        """Run nuclei templates"""
-        print(f"[+] Running nuclei templates for {target['identifier']}")
-        results = []
+    def discover_parameters(self, target):
+        """Discover parameters using multiple tools"""
+        print(f"[+] Discovering parameters for {target['identifier']}")
+        parameters = set()
         
-        # Define template categories based on official nuclei-templates repository structure
-        template_categories = {
-            'http': 'http/',
-            'dns': 'dns/',
-            'file': 'file/',
-            'network': 'network/',
-            'ssl': 'ssl/',
-            'headless': 'headless/',
-            'workflows': 'workflows/',
-            'javascript': 'javascript/',
-            'dast': 'dast/',
-            'cloud': 'cloud/'
-        }
-        
-        # Run all templates at once for better efficiency
-        try:
-            output_file = os.path.join(self.results_base_dir, f"nuclei_results.json")
-            print(f"[+] Running nuclei scan...")
-            subprocess.run([
-                "nuclei",
-                "-u", target['identifier'],
-                "-t", self.templates_dir,
-                "-o", output_file,
-                "-j"  # Use -j for JSON output
-            ], check=True)
-            results.append(output_file)
-        except Exception as e:
-            print(f"[-] Error running nuclei scan: {str(e)}")
-        
-        return results
-
-    def check_waf(self, target):
-        """Check for WAF and try to bypass"""
-        print(f"[+] Checking WAF for {target['identifier']}")
-        waf_results = {
-            'detected': False,
-            'type': None,
-            'bypass_attempted': False,
-            'bypass_successful': False
-        }
-        
-        # Common WAF detection headers
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'close',
-            'Upgrade-Insecure-Requests': '1'
-        }
-        
-        try:
-            # Test for WAF
-            response = requests.get(target['identifier'], headers=headers, timeout=5)
-            waf_headers = ['x-waf', 'x-cdn', 'cf-ray', 'x-shield', 'x-protection']
-            
-            for header in waf_headers:
-                if header in response.headers:
-                    waf_results['detected'] = True
-                    waf_results['type'] = header
-                    break
-            
-            # If WAF detected, try bypass techniques
-            if waf_results['detected'] and self.config['settings']['waf_bypass']:
-                waf_results['bypass_attempted'] = True
+        # Try Arjun first
+        arjun_path = self.tool_manager.get_tool_path('Arjun')
+        if arjun_path:
+            try:
+                arjun_output = os.path.join(self.results_base_dir, f"arjun_results_{target['identifier'].replace('/', '_')}.json")
+                subprocess.run([
+                    'python', os.path.join(arjun_path, 'arjun.py'),
+                    '-u', target['identifier'],
+                    '-oJ', arjun_output,
+                    '--passive'
+                ], check=True)
                 
-                # Try different bypass techniques
-                bypass_headers = [
-                    {'X-Forwarded-For': '127.0.0.1'},
-                    {'X-Originating-IP': '127.0.0.1'},
-                    {'X-Remote-IP': '127.0.0.1'},
-                    {'X-Remote-Addr': '127.0.0.1'}
-                ]
-                
-                for bypass_header in bypass_headers:
-                    try:
-                        headers.update(bypass_header)
-                        bypass_response = requests.get(target['identifier'], headers=headers, timeout=5)
-                        if bypass_response.status_code == 200:
-                            waf_results['bypass_successful'] = True
-                            break
-                    except:
-                        continue
-                
-        except Exception as e:
-            print(f"[-] Error checking WAF: {str(e)}")
+                if os.path.exists(arjun_output):
+                    with open(arjun_output, 'r') as f:
+                        arjun_results = json.load(f)
+                        if isinstance(arjun_results, list):
+                            for result in arjun_results:
+                                if 'params' in result:
+                                    parameters.update(result['params'])
+            except Exception as e:
+                print(f"[-] Error running Arjun: {str(e)}")
         
-        return waf_results
+        # Try ParamSpider as backup
+        paramspider_path = self.tool_manager.get_tool_path('ParamSpider')
+        if paramspider_path and not parameters:
+            try:
+                paramspider_output = os.path.join(self.results_base_dir, f"paramspider_results_{target['identifier'].replace('/', '_')}.txt")
+                subprocess.run([
+                    'python', os.path.join(paramspider_path, 'paramspider.py'),
+                    '--domain', urlparse(target['identifier']).netloc,
+                    '--output', paramspider_output
+                ], check=True)
+                
+                if os.path.exists(paramspider_output):
+                    with open(paramspider_output, 'r') as f:
+                        for line in f:
+                            if '?' in line:
+                                params = line.split('?')[1].split('&')
+                                parameters.update([p.split('=')[0] for p in params])
+            except Exception as e:
+                print(f"[-] Error running ParamSpider: {str(e)}")
+        
+        return list(parameters)
 
     def run_security_tools(self, target):
         """Run various security tools in parallel"""
@@ -299,26 +348,97 @@ class BugBountyScanner:
         target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_').replace(':', '_'))
         os.makedirs(target_dir, exist_ok=True)
         
-        # Define tools and their commands
+        # Discover parameters first
+        parameters = self.discover_parameters(target)
+        if not parameters:
+            print(f"[-] No parameters found for {target['identifier']}, skipping SQLMap")
+        else:
+            print(f"[+] Found parameters: {', '.join(parameters)}")
+        
+        # Check for XSStrike
+        xsstrike_path = self.tool_manager.get_tool_path('XSStrike')
+        if xsstrike_path:
+            print(f"[+] Found XSStrike at {xsstrike_path}")
+            try:
+                # Add XSStrike to Python path
+                sys.path.append(xsstrike_path)
+                from xsstrike import xsstrike
+                
+                # Run XSStrike scan
+                xsstrike_output = os.path.join(target_dir, 'xsstrike_results.json')
+                subprocess.run([
+                    'python', os.path.join(xsstrike_path, 'xsstrike.py'),
+                    '--url', target['identifier'],
+                    '--params',
+                    '--crawl',
+                    '--blind',
+                    '--skip-dom',
+                    '--skip-poc',
+                    '--output', xsstrike_output
+                ], check=True)
+                results['xsstrike'] = xsstrike_output
+            except Exception as e:
+                print(f"[-] Error running XSStrike: {str(e)}")
+        
+        # Define other tools and their commands
         tools = {
             'nuclei': {
                 'command': ['nuclei', '-u', target['identifier'], '-t', self.templates_dir, '-j'],
                 'output_file': os.path.join(target_dir, 'nuclei_results.json')
-            },
-            'sqlmap': {
-                'command': ['sqlmap', '-u', target['identifier'], '--batch', '--random-agent', '--output-dir', target_dir],
-                'output_file': os.path.join(target_dir, 'sqlmap_results')
-            },
-            'xsser': {
-                'command': ['xsser', '--url', target['identifier'], '--auto'],
-                'output_file': os.path.join(target_dir, 'xsser_results.txt')
             }
         }
+        
+        # Add SQLMap only if parameters were found
+        if parameters:
+            tools['sqlmap'] = {
+                'command': [
+                    'sqlmap',
+                    '-u', target['identifier'],
+                    '--batch',
+                    '--random-agent',
+                    '--output-dir', target_dir,
+                    '--forms',
+                    '--crawl=2',
+                    '--level=3',
+                    '--risk=2',
+                    '--threads=10',
+                    '--param-del="&"',
+                    '--skip-urlencode',
+                    '--eval="from urllib.parse import unquote; print(unquote(\'%s\'))"'
+                ],
+                'output_file': os.path.join(target_dir, 'sqlmap_results')
+            }
+        
+        # Add other tools
+        tools.update({
+            'gospider': {
+                'command': [
+                    'gospider',
+                    '-s', target['identifier'],
+                    '-o', os.path.join(target_dir, 'gospider_results.txt'),
+                    '-c', '10',
+                    '-d', '3'
+                ],
+                'output_file': os.path.join(target_dir, 'gospider_results.txt')
+            },
+            'waybackurls': {
+                'command': [
+                    'waybackurls',
+                    target['identifier'].replace('https://', '').replace('http://', ''),
+                    '>', os.path.join(target_dir, 'waybackurls_results.txt')
+                ],
+                'output_file': os.path.join(target_dir, 'waybackurls_results.txt')
+            }
+        })
         
         def run_tool(tool_name, tool_config):
             try:
                 print(f"[+] Running {tool_name} for {target['identifier']}")
-                subprocess.run(tool_config['command'], check=True)
+                # Handle special case for waybackurls which uses shell redirection
+                if tool_name == 'waybackurls':
+                    subprocess.run(' '.join(tool_config['command']), shell=True, check=True)
+                else:
+                    subprocess.run(tool_config['command'], check=True)
                 return tool_name, tool_config['output_file']
             except Exception as e:
                 print(f"[-] Error running {tool_name} for {target['identifier']}: {str(e)}")
@@ -479,7 +599,7 @@ class BugBountyScanner:
                                     })
                             
                             # Add XSS findings
-                            elif tool == 'xsser':
+                            elif tool == 'xsstrike':
                                 if 'vulnerabilities' in tool_results:
                                     summary['interesting_findings']['potential_vulnerabilities'].append({
                                         'target': target,
@@ -624,37 +744,58 @@ class BugBountyScanner:
         return summary_file
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage:")
-        print("  For single target: python bugbounty_scanner.py -t <target_url>")
-        print("  For CSV file: python bugbounty_scanner.py -c <csv_file>")
-        print("  Optional: -f <config_file> for custom configuration")
+    # Initialize virtual environment manager
+    venv_manager = VenvManager()
+    
+    # Set up virtual environment if needed
+    if not venv_manager.setup_venv():
+        print("[-] Failed to set up virtual environment")
         sys.exit(1)
 
-    target = None
-    csv_file = None
-    config_file = None
-
-    i = 1
-    while i < len(sys.argv):
-        if sys.argv[i] == '-t':
-            target = sys.argv[i + 1]
-            i += 2
-        elif sys.argv[i] == '-c':
-            csv_file = sys.argv[i + 1]
-            i += 2
-        elif sys.argv[i] == '-f':
-            config_file = sys.argv[i + 1]
-            i += 2
-        else:
-            i += 1
-
-    scanner = BugBountyScanner(csv_file=csv_file, target=target, config_file=config_file)
-    summary_file = scanner.run_scans()
+    # Get the path to the current script
+    current_script = Path(__file__)
     
-    print("\nScan Summary:")
-    print(f"Results directory: {scanner.results_base_dir}")
-    print(f"Summary file: {summary_file}")
+    # Run the script in the virtual environment
+    if not venv_manager.run_in_venv(current_script, *sys.argv[1:]):
+        sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    # Check if we're running in the virtual environment
+    if not os.environ.get('VIRTUAL_ENV'):
+        # We're not in the virtual environment, so set it up and run the script again
+        main()
+    else:
+        # We're in the virtual environment, so run the actual scanner code
+        # [Rest of your existing BugBountyScanner class and code here]
+        # ... (keep all the existing scanner code)
+        if len(sys.argv) < 2:
+            print("Usage:")
+            print("  For single target: python bugbounty_scanner.py -t <target_url>")
+            print("  For CSV file: python bugbounty_scanner.py -c <csv_file>")
+            print("  Optional: -f <config_file> for custom configuration")
+            sys.exit(1)
+
+        target = None
+        csv_file = None
+        config_file = None
+
+        i = 1
+        while i < len(sys.argv):
+            if sys.argv[i] == '-t':
+                target = sys.argv[i + 1]
+                i += 2
+            elif sys.argv[i] == '-c':
+                csv_file = sys.argv[i + 1]
+                i += 2
+            elif sys.argv[i] == '-f':
+                config_file = sys.argv[i + 1]
+                i += 2
+            else:
+                i += 1
+
+        scanner = BugBountyScanner(csv_file=csv_file, target=target, config_file=config_file)
+        summary_file = scanner.run_scans()
+        
+        print("\nScan Summary:")
+        print(f"Results directory: {scanner.results_base_dir}")
+        print(f"Summary file: {summary_file}") 
