@@ -24,6 +24,8 @@ class VenvManager:
         self.base_dir = Path(__file__).parent.parent
         self.venv_dir = self.base_dir / 'venv'
         self.requirements_file = self.base_dir / 'requirements.txt'
+        self.tools_dir = self.base_dir / 'tools'
+        self.tools_dir.mkdir(exist_ok=True)
         self.activate_script = self.venv_dir / 'bin' / 'activate' if os.name != 'nt' else self.venv_dir / 'Scripts' / 'activate.bat'
 
     def setup_venv(self):
@@ -34,6 +36,7 @@ class VenvManager:
                 venv.create(self.venv_dir, with_pip=True)
                 print(f"[+] Virtual environment created at {self.venv_dir}")
                 self.install_requirements()
+                self.install_tools()
             except Exception as e:
                 print(f"[-] Error creating virtual environment: {str(e)}")
                 return False
@@ -51,6 +54,7 @@ pyyaml>=6.0.1
 beautifulsoup4>=4.12.2
 colorama>=0.4.6
 tqdm>=4.66.1
+pipx>=1.2.0
 """)
 
             # Install requirements using the virtual environment's pip
@@ -62,11 +66,67 @@ tqdm>=4.66.1
             print(f"[-] Error installing requirements: {str(e)}")
             return False
 
+    def install_tools(self):
+        """Install required tools"""
+        print("[+] Installing required tools...")
+        
+        # Install XSStrike
+        xsstrike_dir = self.tools_dir / 'XSStrike'
+        if not xsstrike_dir.exists():
+            print("[+] Installing XSStrike...")
+            try:
+                subprocess.run(['git', 'clone', 'https://github.com/s0md3v/XSStrike', str(xsstrike_dir)], check=True)
+                pip_path = self.venv_dir / 'bin' / 'pip' if os.name != 'nt' else self.venv_dir / 'Scripts' / 'pip.exe'
+                subprocess.run([str(pip_path), 'install', '-r', str(xsstrike_dir / 'requirements.txt'), '--break-system-packages'], check=True)
+            except Exception as e:
+                print(f"[-] Error installing XSStrike: {str(e)}")
+
+        # Install Arjun using pipx
+        print("[+] Installing Arjun...")
+        try:
+            subprocess.run(['pipx', 'install', 'arjun'], check=True)
+        except Exception as e:
+            print(f"[-] Error installing Arjun: {str(e)}")
+
+        # Install ParamSpider
+        paramspider_dir = self.tools_dir / 'paramspider'
+        if not paramspider_dir.exists():
+            print("[+] Installing ParamSpider...")
+            try:
+                subprocess.run(['git', 'clone', 'https://github.com/devanshbatham/paramspider', str(paramspider_dir)], check=True)
+                pip_path = self.venv_dir / 'bin' / 'pip' if os.name != 'nt' else self.venv_dir / 'Scripts' / 'pip.exe'
+                subprocess.run([str(pip_path), 'install', '.'], cwd=str(paramspider_dir), check=True)
+            except Exception as e:
+                print(f"[-] Error installing ParamSpider: {str(e)}")
+
+        # Install waybackurls
+        print("[+] Installing waybackurls...")
+        try:
+            subprocess.run(['go', 'install', 'github.com/tomnomnom/waybackurls@latest'], check=True)
+        except Exception as e:
+            print(f"[-] Error installing waybackurls: {str(e)}")
+
+        # Install gospider
+        print("[+] Installing gospider...")
+        try:
+            os.environ['GO111MODULE'] = 'on'
+            subprocess.run(['go', 'install', 'github.com/jaeles-project/gospider@latest'], check=True)
+        except Exception as e:
+            print(f"[-] Error installing gospider: {str(e)}")
+
     def get_python_path(self):
         """Get the path to the Python executable in the virtual environment"""
         if os.name == 'nt':  # Windows
             return self.venv_dir / 'Scripts' / 'python.exe'
         return self.venv_dir / 'bin' / 'python'
+
+    def get_tool_path(self, tool_name):
+        """Get the path to a tool"""
+        if tool_name == 'XSStrike':
+            return self.tools_dir / 'XSStrike' / 'xsstrike.py'
+        elif tool_name == 'ParamSpider':
+            return self.tools_dir / 'paramspider' / 'paramspider.py'
+        return None
 
     def run_in_venv(self, script_path, *args):
         """Run a script in the virtual environment"""
@@ -296,34 +356,34 @@ class BugBountyScanner:
         parameters = set()
         
         # Try Arjun first
-        arjun_path = self.tool_manager.get_tool_path('Arjun')
-        if arjun_path:
-            try:
-                arjun_output = os.path.join(self.results_base_dir, f"arjun_results_{target['identifier'].replace('/', '_')}.json")
-                subprocess.run([
-                    'python', os.path.join(arjun_path, 'arjun.py'),
-                    '-u', target['identifier'],
-                    '-oJ', arjun_output,
-                    '--passive'
-                ], check=True)
-                
-                if os.path.exists(arjun_output):
-                    with open(arjun_output, 'r') as f:
-                        arjun_results = json.load(f)
-                        if isinstance(arjun_results, list):
-                            for result in arjun_results:
-                                if 'params' in result:
-                                    parameters.update(result['params'])
-            except Exception as e:
-                print(f"[-] Error running Arjun: {str(e)}")
+        try:
+            print("[+] Running Arjun...")
+            arjun_output = os.path.join(self.results_base_dir, f"arjun_results_{target['identifier'].replace('/', '_')}.json")
+            subprocess.run([
+                'arjun',
+                '-u', target['identifier'],
+                '-oJ', arjun_output,
+                '--passive'
+            ], check=True)
+            
+            if os.path.exists(arjun_output):
+                with open(arjun_output, 'r') as f:
+                    arjun_results = json.load(f)
+                    if isinstance(arjun_results, list):
+                        for result in arjun_results:
+                            if 'params' in result:
+                                parameters.update(result['params'])
+        except Exception as e:
+            print(f"[-] Error running Arjun: {str(e)}")
         
         # Try ParamSpider as backup
-        paramspider_path = self.tool_manager.get_tool_path('ParamSpider')
+        paramspider_path = self.venv_manager.get_tool_path('ParamSpider')
         if paramspider_path and not parameters:
             try:
+                print("[+] Running ParamSpider...")
                 paramspider_output = os.path.join(self.results_base_dir, f"paramspider_results_{target['identifier'].replace('/', '_')}.txt")
                 subprocess.run([
-                    'python', os.path.join(paramspider_path, 'paramspider.py'),
+                    'python', str(paramspider_path),
                     '--domain', urlparse(target['identifier']).netloc,
                     '--output', paramspider_output
                 ], check=True)
@@ -356,18 +416,14 @@ class BugBountyScanner:
             print(f"[+] Found parameters: {', '.join(parameters)}")
         
         # Check for XSStrike
-        xsstrike_path = self.tool_manager.get_tool_path('XSStrike')
+        xsstrike_path = self.venv_manager.get_tool_path('XSStrike')
         if xsstrike_path:
             print(f"[+] Found XSStrike at {xsstrike_path}")
             try:
-                # Add XSStrike to Python path
-                sys.path.append(xsstrike_path)
-                from xsstrike import xsstrike
-                
                 # Run XSStrike scan
                 xsstrike_output = os.path.join(target_dir, 'xsstrike_results.json')
                 subprocess.run([
-                    'python', os.path.join(xsstrike_path, 'xsstrike.py'),
+                    'python', str(xsstrike_path),
                     '--url', target['identifier'],
                     '--params',
                     '--crawl',
@@ -417,7 +473,13 @@ class BugBountyScanner:
                     '-s', target['identifier'],
                     '-o', os.path.join(target_dir, 'gospider_results.txt'),
                     '-c', '10',
-                    '-d', '3'
+                    '-d', '3',
+                    '--js',
+                    '--sitemap',
+                    '--robots',
+                    '--other-source',
+                    '--include-subs',
+                    '--json'
                 ],
                 'output_file': os.path.join(target_dir, 'gospider_results.txt')
             },
