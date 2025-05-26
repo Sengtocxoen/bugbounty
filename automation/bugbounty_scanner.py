@@ -201,12 +201,22 @@ class BugBountyScanner:
         print(f"[+] Running nuclei templates for {target['identifier']}")
         results = []
         
-        # Define template categories and their paths
+        # Define template categories based on official nuclei-templates repository structure
         template_categories = {
             'cves': 'cves/',
             'exposures': 'exposures/',
             'misconfiguration': 'misconfiguration/',
-            'vulnerabilities': 'vulnerabilities/'
+            'vulnerabilities': 'vulnerabilities/',
+            'http': 'http/',
+            'dns': 'dns/',
+            'file': 'file/',
+            'network': 'network/',
+            'ssl': 'ssl/',
+            'headless': 'headless/',
+            'workflows': 'workflows/',
+            'javascript': 'javascript/',
+            'dast': 'dast/',
+            'cloud': 'cloud/'
         }
         
         for category, template_path in template_categories.items():
@@ -218,6 +228,7 @@ class BugBountyScanner:
                     print(f"[-] Template path not found: {full_template_path}")
                     continue
                 
+                print(f"[+] Running {category} templates...")
                 subprocess.run([
                     "nuclei",
                     "-u", target['identifier'],
