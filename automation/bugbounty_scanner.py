@@ -13,6 +13,9 @@ from urllib.parse import urlparse, urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
+from typing import Dict
+import argparse
+import shutil
 
 def check_venv():
     """Check if running in virtual environment"""
@@ -28,9 +31,8 @@ def check_venv():
             sys.exit(1)
 
 class BugBountyScanner:
-    def __init__(self, csv_file=None, target=None, config_file=None):
-        self.csv_file = csv_file
-        self.target = target
+    def __init__(self, output_dir, config_file=None):
+        self.output_dir = output_dir
         self.config_file = config_file
         self.results_base_dir = f"scan_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         os.makedirs(self.results_base_dir, exist_ok=True)
@@ -90,10 +92,10 @@ class BugBountyScanner:
         
         # Load targets from CSV if provided
         self.targets = []
-        if csv_file:
+        if self.config_file:
             self.targets = self.load_targets_from_csv()
-        elif target:
-            self.targets = [{'identifier': self.normalize_url(target), 'asset_type': 'url'}]
+        elif self.config['scan_categories']['recon']['enabled']:
+            self.targets = [{'identifier': self.normalize_url(target), 'asset_type': 'url'} for target in self.config['scan_categories']['recon']['tools']]
 
         # Add new workflow configurations
         self.workflows = {
@@ -164,7 +166,7 @@ class BugBountyScanner:
         """Load and filter targets from CSV file"""
         targets = []
         try:
-            with open(self.csv_file, 'r', encoding='utf-8') as f:
+            with open(self.config_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     if self.is_valid_target(row):
@@ -244,422 +246,251 @@ class BugBountyScanner:
         
         return list(parameters)
 
-    def run_recon_tools(self, target):
+    def run_recon_tools(self, target: str) -> Dict[str, any]:
         """Run reconnaissance tools"""
-        print(f"[+] Running reconnaissance tools for {target['identifier']}")
         results = {}
+        recon_dir = Path(self.output_dir) / 'recon'
+        recon_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create target-specific directory
-        target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_').replace(':', '_'))
-        os.makedirs(target_dir, exist_ok=True)
-        
-        # Get domain for subdomain enumeration
-        domain = urlparse(target['identifier']).netloc
-
-        # Run BBOT for comprehensive scanning
+        # Run BBOT
         try:
             print("[+] Running BBOT scanner...")
-            bbot_output = os.path.join(target_dir, "bbot_results")
-            bbot_json = os.path.join(target_dir, "bbot_results.json")
-            
+            bbot_output = recon_dir / 'bbot_results'
             subprocess.run([
                 'bbot',
-                '-t', target['identifier'],
-                '-p', 'subdomain-enum', 'cloud-enum', 'email-enum',
-                '-o', bbot_output,
-                '--json', bbot_json,
+                '-t', target,
+                '-p', 'subdomain-enum,cloud-enum,email-enum',
+                '-o', str(bbot_output),
+                '--json',
                 '--allow-deadly',
-                '--force',
-                '--no-deps'
+                '--force'
             ], check=True)
-            
-            if os.path.exists(bbot_json):
-                with open(bbot_json, 'r') as f:
-                    bbot_data = json.load(f)
-                    results['bbot'] = {
-                        'output_dir': bbot_output,
-                        'json_file': bbot_json,
-                        'findings': bbot_data,
-                        'status': 'completed'
-                    }
-        except Exception as e:
+            if (bbot_output / 'bbot.json').exists():
+                results['bbot'] = json.loads((bbot_output / 'bbot.json').read_text())
+        except subprocess.CalledProcessError as e:
             print(f"[-] Error running BBOT: {str(e)}")
-            results['bbot'] = {'status': 'failed', 'error': str(e)}
-
-        # Run other recon tools
-        recon_tools = {
-            'sublist3r': {
-                'command': [
-                    'python3',
-                    str(Path(__file__).parent.parent / 'tools' / 'Sublist3r' / 'sublist3r.py'),
-                    '-d', domain,
-                    '-o', os.path.join(target_dir, 'sublist3r_results.txt')
-                ]
-            },
-            'knock': {
-                'command': [
-                    'python3',
-                    str(Path(__file__).parent.parent / 'tools' / 'knock' / 'knockpy.py'),
-                    domain,
-                    '-o', os.path.join(target_dir, 'knock_results.json')
-                ]
-            },
-            'massdns': {
-                'command': [
-                    str(Path(__file__).parent.parent / 'tools' / 'massdns' / 'bin' / 'massdns'),
-                    '-r', str(Path(__file__).parent.parent / 'tools' / 'massdns' / 'lists' / 'resolvers.txt'),
-                    '-t', 'A',
-                    '-o', 'S',
-                    '-w', os.path.join(target_dir, 'massdns_results.txt'),
-                    os.path.join(target_dir, 'sublist3r_results.txt')
-                ]
-            },
-            'asnlookup': {
-                'command': [
-                    'python3',
-                    str(Path(__file__).parent.parent / 'tools' / 'asnlookup' / 'asnlookup.py'),
-                    '-o', domain,
-                    '-f', os.path.join(target_dir, 'asnlookup_results.txt')
-                ]
-            }
-        }
-
-        for tool_name, tool_config in recon_tools.items():
-            try:
-                print(f"[+] Running {tool_name}...")
-                subprocess.run(tool_config['command'], check=True)
-                results[tool_name] = {'status': 'completed'}
-            except Exception as e:
-                print(f"[-] Error running {tool_name}: {str(e)}")
-                results[tool_name] = {'status': 'failed', 'error': str(e)}
-
+        
+        # Run Sublist3r
+        try:
+            print("[+] Running Sublist3r...")
+            sublist3r_output = recon_dir / 'sublist3r.txt'
+            subprocess.run([
+                'python3',
+                str(Path(__file__).parent.parent / 'tools' / 'Sublist3r' / 'sublist3r.py'),
+                '-d', urlparse(target).netloc,
+                '-o', str(sublist3r_output)
+            ], check=True)
+            if sublist3r_output.exists():
+                results['sublist3r'] = sublist3r_output.read_text()
+        except subprocess.CalledProcessError as e:
+            print(f"[-] Error running Sublist3r: {str(e)}")
+        
+        # Run Knock
+        try:
+            print("[+] Running Knock...")
+            knock_output = recon_dir / 'knock_results.json'
+            subprocess.run([
+                'python3',
+                str(Path(__file__).parent.parent / 'tools' / 'knock' / 'knockpy.py'),
+                '-d', urlparse(target).netloc,
+                '--json',
+                '--save', str(knock_output)
+            ], check=True)
+            if knock_output.exists():
+                results['knock'] = json.loads(knock_output.read_text())
+        except subprocess.CalledProcessError as e:
+            print(f"[-] Error running Knock: {str(e)}")
+        
+        # Run ASNLookup
+        try:
+            print("[+] Running ASNLookup...")
+            asn_output = recon_dir / 'asn_results.txt'
+            subprocess.run([
+                'python3',
+                str(Path(__file__).parent.parent / 'tools' / 'asnlookup' / 'asnlookup.py'),
+                '-o', urlparse(target).netloc,
+                '-n', str(asn_output)
+            ], check=True)
+            if asn_output.exists():
+                results['asnlookup'] = asn_output.read_text()
+        except subprocess.CalledProcessError as e:
+            print(f"[-] Error running ASNLookup: {str(e)}")
+        
+        # Run Httprobe
+        try:
+            print("[+] Running Httprobe...")
+            httprobe_output = recon_dir / 'httprobe.txt'
+            if results.get('sublist3r'):
+                subprocess.run([
+                    'httprobe',
+                    '-c', str(self.config['scan_categories']['recon']['settings']['max_concurrent_requests']),
+                    '-t', str(self.config['scan_categories']['recon']['settings']['request_timeout'])
+                ], input=results['sublist3r'].encode(), 
+                   stdout=httprobe_output.open('w'), check=True)
+                if httprobe_output.exists():
+                    results['httprobe'] = httprobe_output.read_text()
+        except subprocess.CalledProcessError as e:
+            print(f"[-] Error running Httprobe: {str(e)}")
+        
+        # Run Waybackurls
+        try:
+            print("[+] Running Waybackurls...")
+            wayback_output = recon_dir / 'wayback.txt'
+            subprocess.run([
+                'waybackurls',
+                urlparse(target).netloc
+            ], stdout=wayback_output.open('w'), check=True)
+            if wayback_output.exists():
+                results['waybackurls'] = wayback_output.read_text()
+        except subprocess.CalledProcessError as e:
+            print(f"[-] Error running Waybackurls: {str(e)}")
+        
         return results
 
-    def run_web_scan_tools(self, target):
+    def run_web_scan_tools(self, target: str) -> Dict[str, any]:
         """Run web scanning tools"""
-        print(f"[+] Running web scanning tools for {target['identifier']}")
         results = {}
+        web_scan_dir = Path(self.output_dir) / 'web_scan'
+        web_scan_dir.mkdir(parents=True, exist_ok=True)
         
-        target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_').replace(':', '_'))
-        os.makedirs(target_dir, exist_ok=True)
-
-        # Run Katana crawler
-        try:
-            print("[+] Running Katana crawler...")
-            katana_output = os.path.join(target_dir, "katana_results.txt")
-            katana_json = os.path.join(target_dir, "katana_results.json")
-            
-            subprocess.run([
-                'katana',
-                '-u', target['identifier'],
-                '-jc',
-                '-o', katana_json,
-                '-d', '3',
-                '-c', '10',
-                '-p', '10',
-                '-rl', '150',
-                '-kf', 'all',
-                '-aff',
-                '-fs', 'rdn',
-                '-silent'
-            ], check=True)
-            
-            if os.path.exists(katana_json):
-                with open(katana_json, 'r') as f:
-                    katana_data = json.load(f)
-                    with open(katana_output, 'w') as out:
-                        for item in katana_data:
-                            out.write(f"URL: {item.get('url', 'N/A')}\n")
-                            out.write(f"Method: {item.get('method', 'N/A')}\n")
-                            out.write(f"Status: {item.get('status', 'N/A')}\n")
-                            out.write(f"Content-Type: {item.get('content_type', 'N/A')}\n")
-                            out.write(f"Technologies: {', '.join(item.get('technologies', []))}\n")
-                            out.write("-" * 80 + "\n")
-            
-            results['katana'] = {
-                'output_file': katana_output,
-                'json_file': katana_json,
-                'status': 'completed'
-            }
-        except Exception as e:
-            print(f"[-] Error running Katana: {str(e)}")
-            results['katana'] = {'status': 'failed', 'error': str(e)}
-
         # Run Dirsearch
         try:
             print("[+] Running Dirsearch...")
-            dirsearch_output = os.path.join(target_dir, 'dirsearch_results.txt')
+            dirsearch_output = web_scan_dir / 'dirsearch.txt'
             subprocess.run([
                 'python3',
                 str(Path(__file__).parent.parent / 'tools' / 'dirsearch' / 'dirsearch.py'),
-                '-u', target['identifier'],
-                '-e', 'php,asp,aspx,jsp,html,js,txt',
+                '-u', target,
+                '-e', 'php,asp,aspx,jsp,html,js',
                 '-x', '403,404',
-                '-o', dirsearch_output
+                '-o', str(dirsearch_output)
             ], check=True)
-            results['dirsearch'] = {'status': 'completed', 'output': dirsearch_output}
-        except Exception as e:
+            if dirsearch_output.exists():
+                results['dirsearch'] = dirsearch_output.read_text()
+        except subprocess.CalledProcessError as e:
             print(f"[-] Error running Dirsearch: {str(e)}")
-            results['dirsearch'] = {'status': 'failed', 'error': str(e)}
-
+        
+        # Run Katana
+        try:
+            print("[+] Running Katana...")
+            katana_output = web_scan_dir / 'katana.txt'
+            # Check if katana is installed
+            if not shutil.which('katana'):
+                print("[-] Katana not found in PATH. Installing...")
+                subprocess.run([
+                    'go', 'install', 'github.com/projectdiscovery/katana/cmd/katana@latest'
+                ], check=True)
+            
+            subprocess.run([
+                'katana',
+                '-u', target,
+                '-d', str(self.config['scan_categories']['web_scan']['settings']['max_depth']),
+                '-o', str(katana_output)
+            ], check=True)
+            if katana_output.exists():
+                results['katana'] = katana_output.read_text()
+        except subprocess.CalledProcessError as e:
+            print(f"[-] Error running Katana: {str(e)}")
+        
         return results
 
-    def run_vuln_scan_tools(self, target):
+    def run_vuln_scan_tools(self, target: str) -> Dict[str, any]:
         """Run vulnerability scanning tools"""
-        print(f"[+] Running vulnerability scanning tools for {target['identifier']}")
         results = {}
+        vuln_scan_dir = Path(self.output_dir) / 'vuln_scan'
+        vuln_scan_dir.mkdir(parents=True, exist_ok=True)
         
-        target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_').replace(':', '_'))
-        os.makedirs(target_dir, exist_ok=True)
-
+        # Run SQLMap
+        try:
+            print("[+] Running SQLMap...")
+            sqlmap_output = vuln_scan_dir / 'sqlmap'
+            subprocess.run([
+                'python3',
+                str(Path(__file__).parent.parent / 'tools' / 'sqlmap-dev' / 'sqlmap.py'),
+                '-u', target,
+                '--batch',
+                '--random-agent',
+                '--level', '2',
+                '--risk', '2',
+                '--output-dir', str(sqlmap_output)
+            ], check=True)
+            if (sqlmap_output / 'log').exists():
+                results['sqlmap'] = (sqlmap_output / 'log').read_text()
+        except subprocess.CalledProcessError as e:
+            print(f"[-] Error running SQLMap: {str(e)}")
+        
         # Run XSSCrapy
         try:
             print("[+] Running XSSCrapy...")
-            xsscrapy_output = os.path.join(target_dir, "xsscrapy_results.txt")
+            xsscrapy_output = vuln_scan_dir / 'xsscrapy.txt'
+            
+            # First, try to fix Python 3 compatibility
+            xsscrapy_dir = Path(__file__).parent.parent / 'tools' / 'xsscrapy'
+            spider_file = xsscrapy_dir / 'xsscrapy' / 'spiders' / 'xss_spider.py'
+            
+            if spider_file.exists():
+                # Read the file content
+                content = spider_file.read_text()
+                # Replace Python 2 imports with Python 3
+                content = content.replace('from urlparse import', 'from urllib.parse import')
+                # Write back the modified content
+                spider_file.write_text(content)
+            
+            # Run XSSCrapy with Python 3
             subprocess.run([
                 'python3',
-                str(Path(__file__).parent.parent / 'tools' / 'xsscrapy' / 'xsscrapy.py'),
-                '-u', target['identifier'],
-                '-o', xsscrapy_output,
-                '--cookie', 'SessionID=test',
+                str(xsscrapy_dir / 'xsscrapy.py'),
+                '-u', target,
+                '-o', str(xsscrapy_output),
                 '--threads', '10',
                 '--timeout', '10'
             ], check=True)
-            results['xsscrapy'] = {'status': 'completed', 'output': xsscrapy_output}
-        except Exception as e:
+            
+            if xsscrapy_output.exists():
+                results['xsscrapy'] = xsscrapy_output.read_text()
+        except subprocess.CalledProcessError as e:
             print(f"[-] Error running XSSCrapy: {str(e)}")
-            results['xsscrapy'] = {'status': 'failed', 'error': str(e)}
-
-        # Run SQLMap if parameters were found
-        parameters = self.discover_parameters(target)
-        if parameters:
+            print("[*] Trying alternative XSSCrapy execution...")
             try:
-                print("[+] Running SQLMap...")
-                sqlmap_output = os.path.join(target_dir, 'sqlmap_results')
+                # Try running with Python 2 if available
                 subprocess.run([
-                    'python3',
-                    str(Path(__file__).parent.parent / 'tools' / 'sqlmap-dev' / 'sqlmap.py'),
-                    '-u', target['identifier'],
-                    '--batch',
-                    '--random-agent',
-                    '--output-dir', sqlmap_output,
-                    '--forms',
-                    '--crawl=2',
-                    '--level=3',
-                    '--risk=2',
-                    '--threads=10'
+                    'python2',
+                    str(xsscrapy_dir / 'xsscrapy.py'),
+                    '-u', target,
+                    '-o', str(xsscrapy_output),
+                    '--threads', '10',
+                    '--timeout', '10'
                 ], check=True)
-                results['sqlmap'] = {'status': 'completed', 'output': sqlmap_output}
-            except Exception as e:
-                print(f"[-] Error running SQLMap: {str(e)}")
-                results['sqlmap'] = {'status': 'failed', 'error': str(e)}
-
+                if xsscrapy_output.exists():
+                    results['xsscrapy'] = xsscrapy_output.read_text()
+            except subprocess.CalledProcessError as e:
+                print(f"[-] Error running XSSCrapy with Python 2: {str(e)}")
+                print("[*] You may need to install Python 2 or update XSSCrapy to Python 3")
+        
         return results
 
-    def run_api_testing_workflow(self, target):
-        """Run API-focused testing workflow"""
-        print(f"[+] Running API testing workflow for {target['identifier']}")
+    def run_security_tools(self, target: str) -> Dict[str, any]:
+        """Run security tools based on enabled categories"""
         results = {}
         
-        target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_').replace(':', '_'))
-        os.makedirs(target_dir, exist_ok=True)
-
-        # API Endpoint Discovery
-        try:
-            print("[+] Discovering API endpoints...")
-            katana_output = os.path.join(target_dir, "api_endpoints.json")
-            subprocess.run([
-                'katana',
-                '-u', target['identifier'],
-                '-jc',
-                '-o', katana_output,
-                '-d', '3',
-                '-c', '10',
-                '-p', '10',
-                '-rl', '150',
-                '-kf', 'all',
-                '-aff',
-                '-fs', 'rdn',
-                '-silent',
-                '-match', 'api|v1|v2|graphql'
-            ], check=True)
-            results['api_discovery'] = {'status': 'completed', 'output': katana_output}
-        except Exception as e:
-            print(f"[-] Error in API discovery: {str(e)}")
-            results['api_discovery'] = {'status': 'failed', 'error': str(e)}
-
-        # API Authentication Testing
-        if self.workflows['api_testing']['settings']['auth_required']:
-            try:
-                print("[+] Testing API authentication...")
-                auth_output = os.path.join(target_dir, "api_auth_test.txt")
-                # Test common authentication bypasses
-                auth_tests = [
-                    'Authorization: Bearer null',
-                    'Authorization: Bearer undefined',
-                    'Authorization: Bearer 0',
-                    'X-API-Key: null',
-                    'X-API-Key: undefined'
-                ]
-                with open(auth_output, 'w') as f:
-                    for test in auth_tests:
-                        f.write(f"Testing: {test}\n")
-                results['api_auth'] = {'status': 'completed', 'output': auth_output}
-            except Exception as e:
-                print(f"[-] Error in API auth testing: {str(e)}")
-                results['api_auth'] = {'status': 'failed', 'error': str(e)}
-
-        # Rate Limit Testing
-        if self.workflows['api_testing']['settings']['rate_limit_detection']:
-            try:
-                print("[+] Testing rate limits...")
-                rate_output = os.path.join(target_dir, "rate_limit_test.txt")
-                # Implement rate limit testing
-                with open(rate_output, 'w') as f:
-                    f.write("Rate limit testing results\n")
-                results['rate_limit'] = {'status': 'completed', 'output': rate_output}
-            except Exception as e:
-                print(f"[-] Error in rate limit testing: {str(e)}")
-                results['rate_limit'] = {'status': 'failed', 'error': str(e)}
-
-        return results
-
-    def run_auth_testing_workflow(self, target):
-        """Run authentication testing workflow"""
-        print(f"[+] Running authentication testing workflow for {target['identifier']}")
-        results = {}
-        
-        target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_').replace(':', '_'))
-        os.makedirs(target_dir, exist_ok=True)
-
-        # Login Form Testing
-        try:
-            print("[+] Testing login forms...")
-            login_output = os.path.join(target_dir, "login_test.txt")
-            # Test common login bypasses
-            login_tests = [
-                'admin:admin',
-                'admin:password',
-                'admin:123456',
-                'admin:admin123',
-                'admin:password123'
-            ]
-            with open(login_output, 'w') as f:
-                for test in login_tests:
-                    f.write(f"Testing: {test}\n")
-            results['login_test'] = {'status': 'completed', 'output': login_output}
-        except Exception as e:
-            print(f"[-] Error in login testing: {str(e)}")
-            results['login_test'] = {'status': 'failed', 'error': str(e)}
-
-        # 2FA Testing
-        if self.workflows['auth_testing']['settings']['test_2fa']:
-            try:
-                print("[+] Testing 2FA...")
-                tfa_output = os.path.join(target_dir, "2fa_test.txt")
-                # Test common 2FA bypasses
-                tfa_tests = [
-                    '000000',
-                    '123456',
-                    '111111',
-                    '999999'
-                ]
-                with open(tfa_output, 'w') as f:
-                    for test in tfa_tests:
-                        f.write(f"Testing: {test}\n")
-                results['2fa_test'] = {'status': 'completed', 'output': tfa_output}
-            except Exception as e:
-                print(f"[-] Error in 2FA testing: {str(e)}")
-                results['2fa_test'] = {'status': 'failed', 'error': str(e)}
-
-        # Session Analysis
-        if self.workflows['auth_testing']['settings']['session_analysis']:
-            try:
-                print("[+] Analyzing sessions...")
-                session_output = os.path.join(target_dir, "session_analysis.txt")
-                # Test session management
-                with open(session_output, 'w') as f:
-                    f.write("Session analysis results\n")
-                results['session_analysis'] = {'status': 'completed', 'output': session_output}
-            except Exception as e:
-                print(f"[-] Error in session analysis: {str(e)}")
-                results['session_analysis'] = {'status': 'failed', 'error': str(e)}
-
-        return results
-
-    def run_business_logic_workflow(self, target):
-        """Run business logic testing workflow"""
-        print(f"[+] Running business logic testing workflow for {target['identifier']}")
-        results = {}
-        
-        target_dir = os.path.join(self.results_base_dir, target['identifier'].replace('/', '_').replace(':', '_'))
-        os.makedirs(target_dir, exist_ok=True)
-
-        # Workflow Testing
-        if self.workflows['business_logic']['settings']['workflow_testing']:
-            try:
-                print("[+] Testing business workflows...")
-                workflow_output = os.path.join(target_dir, "workflow_test.txt")
-                # Test common workflow bypasses
-                with open(workflow_output, 'w') as f:
-                    f.write("Workflow testing results\n")
-                results['workflow_test'] = {'status': 'completed', 'output': workflow_output}
-            except Exception as e:
-                print(f"[-] Error in workflow testing: {str(e)}")
-                results['workflow_test'] = {'status': 'failed', 'error': str(e)}
-
-        # State Analysis
-        if self.workflows['business_logic']['settings']['state_analysis']:
-            try:
-                print("[+] Analyzing state management...")
-                state_output = os.path.join(target_dir, "state_analysis.txt")
-                # Test state management
-                with open(state_output, 'w') as f:
-                    f.write("State analysis results\n")
-                results['state_analysis'] = {'status': 'completed', 'output': state_output}
-            except Exception as e:
-                print(f"[-] Error in state analysis: {str(e)}")
-                results['state_analysis'] = {'status': 'failed', 'error': str(e)}
-
-        # Race Condition Testing
-        if self.workflows['business_logic']['settings']['race_condition_testing']:
-            try:
-                print("[+] Testing for race conditions...")
-                race_output = os.path.join(target_dir, "race_condition_test.txt")
-                # Test race conditions
-                with open(race_output, 'w') as f:
-                    f.write("Race condition testing results\n")
-                results['race_condition_test'] = {'status': 'completed', 'output': race_output}
-            except Exception as e:
-                print(f"[-] Error in race condition testing: {str(e)}")
-                results['race_condition_test'] = {'status': 'failed', 'error': str(e)}
-
-        return results
-
-    def run_security_tools(self, target):
-        """Run all security tools based on enabled categories and workflows"""
-        print(f"[+] Running security tools for {target['identifier']}")
-        results = {}
+        # Create main output directory
+        self.output_dir = Path(self.output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Run tools based on enabled categories
-        for category, config in self.config['scan_categories'].items():
-            if config['enabled']:
-                if category == 'recon':
-                    results['recon'] = self.run_recon_tools(target)
-                elif category == 'web_scan':
-                    results['web_scan'] = self.run_web_scan_tools(target)
-                elif category == 'vuln_scan':
-                    results['vuln_scan'] = self.run_vuln_scan_tools(target)
+        if self.config['scan_categories']['recon']['enabled']:
+            results['recon'] = self.run_recon_tools(target)
         
-        # Run enabled workflows
-        for workflow, config in self.workflows.items():
-            if config['enabled']:
-                if workflow == 'api_testing':
-                    results['api_testing'] = self.run_api_testing_workflow(target)
-                elif workflow == 'auth_testing':
-                    results['auth_testing'] = self.run_auth_testing_workflow(target)
-                elif workflow == 'business_logic':
-                    results['business_logic'] = self.run_business_logic_workflow(target)
+        if self.config['scan_categories']['web_scan']['enabled']:
+            results['web_scan'] = self.run_web_scan_tools(target)
+        
+        if self.config['scan_categories']['vuln_scan']['enabled']:
+            results['vuln_scan'] = self.run_vuln_scan_tools(target)
+        
+        # Save all results to a single JSON file
+        results_file = self.output_dir / 'scan_results.json'
+        with results_file.open('w') as f:
+            json.dump(results, f, indent=2)
         
         return results
 
@@ -677,7 +508,7 @@ class BugBountyScanner:
         
         try:
             # Run security tools in parallel
-            security_results = self.run_security_tools(target)
+            security_results = self.run_security_tools(target['identifier'])
             
             # Save results
             results = {
@@ -981,47 +812,34 @@ class BugBountyScanner:
         return self.results_base_dir
 
 def main():
-    # Check if running in virtual environment
-    check_venv()
+    """Main function"""
+    parser = argparse.ArgumentParser(description='Bug Bounty Scanner')
+    parser.add_argument('-t', '--target', help='Target URL or domain')
+    parser.add_argument('-f', '--file', help='File containing list of targets')
+    parser.add_argument('-o', '--output', help='Output directory for results', default='scan_results')
+    parser.add_argument('-c', '--config', help='Path to configuration file')
     
-    if len(sys.argv) < 2:
-        print("Usage:")
-        print("  For single target: python bugbounty_scanner.py -t <target_url>")
-        print("  For CSV file: python bugbounty_scanner.py -c <csv_file>")
-        print("  Optional: -f <config_file> for custom configuration")
-        print("\nScan Categories:")
-        print("  - recon: Subdomain enumeration and reconnaissance")
-        print("  - web_scan: Web path discovery and crawling")
-        print("  - vuln_scan: Vulnerability scanning (XSS, SQLi)")
-        print("\nWorkflows:")
-        print("  - api_testing: API-focused testing")
-        print("  - auth_testing: Authentication testing")
-        print("  - business_logic: Business logic testing")
+    args = parser.parse_args()
+    
+    if not args.target and not args.file:
+        parser.print_help()
         sys.exit(1)
-
-    target = None
-    csv_file = None
-    config_file = None
-
-    i = 1
-    while i < len(sys.argv):
-        if sys.argv[i] == '-t':
-            target = sys.argv[i + 1]
-            i += 2
-        elif sys.argv[i] == '-c':
-            csv_file = sys.argv[i + 1]
-            i += 2
-        elif sys.argv[i] == '-f':
-            config_file = sys.argv[i + 1]
-            i += 2
-        else:
-            i += 1
-
-    scanner = BugBountyScanner(csv_file=csv_file, target=target, config_file=config_file)
-    results_dir = scanner.run_scans()
     
-    print("\nScan Summary:")
-    print(f"Results directory: {results_dir}")
+    scanner = BugBountyScanner(args.output, args.config)
+    
+    if args.target:
+        results = scanner.run_security_tools(args.target)
+        print(f"[+] Scan completed. Results saved to {args.output}")
+    elif args.file:
+        with open(args.file) as f:
+            targets = [line.strip() for line in f if line.strip()]
+        
+        for target in targets:
+            print(f"[+] Scanning {target}...")
+            results = scanner.run_security_tools(target)
+            print(f"[+] Scan completed for {target}")
+        
+        print(f"[+] All scans completed. Results saved to {args.output}")
 
 if __name__ == "__main__":
     main() 
