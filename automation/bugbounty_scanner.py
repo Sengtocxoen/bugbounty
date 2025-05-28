@@ -16,6 +16,7 @@ from jinja2 import Environment, FileSystemLoader
 from typing import Dict
 import argparse
 import shutil
+import time
 
 def check_venv():
     """Check if running in virtual environment"""
@@ -256,10 +257,13 @@ class BugBountyScanner:
         try:
             print("[+] Running BBOT scanner...")
             bbot_output = recon_dir / 'bbot_results'
+            # List available presets first
+            subprocess.run(['bbot', '-lm'], check=True)
+            # Run with individual modules instead of presets
             subprocess.run([
                 'bbot',
                 '-t', target,
-                '-p', 'subdomain-enum,cloud-enum,email-enum',
+                '-m', 'subdomain,cloud,email',
                 '-o', str(bbot_output),
                 '--json',
                 '--allow-deadly',
@@ -274,9 +278,20 @@ class BugBountyScanner:
         try:
             print("[+] Running Sublist3r...")
             sublist3r_output = recon_dir / 'sublist3r.txt'
+            # Update Sublist3r to handle CSRF token error
+            sublist3r_script = Path(__file__).parent.parent / 'tools' / 'Sublist3r' / 'sublist3r.py'
+            if sublist3r_script.exists():
+                content = sublist3r_script.read_text()
+                # Add error handling for CSRF token
+                content = content.replace(
+                    'token = csrf_regex.findall(resp)[0]',
+                    'tokens = csrf_regex.findall(resp)\ntoken = tokens[0] if tokens else ""'
+                )
+                sublist3r_script.write_text(content)
+            
             subprocess.run([
                 'python3',
-                str(Path(__file__).parent.parent / 'tools' / 'Sublist3r' / 'sublist3r.py'),
+                str(sublist3r_script),
                 '-d', urlparse(target).netloc,
                 '-o', str(sublist3r_output)
             ], check=True)
@@ -301,21 +316,6 @@ class BugBountyScanner:
         except subprocess.CalledProcessError as e:
             print(f"[-] Error running Knock: {str(e)}")
         
-        # Run ASNLookup
-        try:
-            print("[+] Running ASNLookup...")
-            asn_output = recon_dir / 'asn_results.txt'
-            subprocess.run([
-                'python3',
-                str(Path(__file__).parent.parent / 'tools' / 'asnlookup' / 'asnlookup.py'),
-                '-o', urlparse(target).netloc,
-                '-n', str(asn_output)
-            ], check=True)
-            if asn_output.exists():
-                results['asnlookup'] = asn_output.read_text()
-        except subprocess.CalledProcessError as e:
-            print(f"[-] Error running ASNLookup: {str(e)}")
-        
         # Run Httprobe
         try:
             print("[+] Running Httprobe...")
@@ -331,19 +331,6 @@ class BugBountyScanner:
                     results['httprobe'] = httprobe_output.read_text()
         except subprocess.CalledProcessError as e:
             print(f"[-] Error running Httprobe: {str(e)}")
-        
-        # Run Waybackurls
-        try:
-            print("[+] Running Waybackurls...")
-            wayback_output = recon_dir / 'wayback.txt'
-            subprocess.run([
-                'waybackurls',
-                urlparse(target).netloc
-            ], stdout=wayback_output.open('w'), check=True)
-            if wayback_output.exists():
-                results['waybackurls'] = wayback_output.read_text()
-        except subprocess.CalledProcessError as e:
-            print(f"[-] Error running Waybackurls: {str(e)}")
         
         return results
 
