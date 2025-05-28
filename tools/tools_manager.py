@@ -21,6 +21,7 @@ class ToolsManager:
                     'repo': 'https://github.com/aboul3la/Sublist3r.git',
                     'path': self.tools_dir / 'Sublist3r',
                     'requirements': 'requirements.txt',
+                    'install_cmd': 'sudo pip install -r requirements.txt',
                     'main_script': 'sublist3r.py',
                     'description': 'Subdomain enumeration tool using multiple sources'
                 },
@@ -28,20 +29,15 @@ class ToolsManager:
                     'repo': 'https://github.com/guelfoweb/knock.git',
                     'path': self.tools_dir / 'knock',
                     'requirements': 'requirements.txt',
+                    'install_cmd': 'pip install .',
                     'main_script': 'knockpy.py',
                     'description': 'Subdomain enumeration tool with multiple sources'
-                },
-                'massdns': {
-                    'repo': 'https://github.com/blechschmidt/massdns.git',
-                    'path': self.tools_dir / 'massdns',
-                    'requirements': None,
-                    'main_script': 'bin/massdns',
-                    'description': 'High-performance DNS stub resolver'
                 },
                 'asnlookup': {
                     'repo': 'https://github.com/yassineaboukir/asnlookup.git',
                     'path': self.tools_dir / 'asnlookup',
                     'requirements': 'requirements.txt',
+                    'install_cmd': 'pip install -r requirements.txt',
                     'main_script': 'asnlookup.py',
                     'description': 'ASN lookup tool for finding IP ranges'
                 },
@@ -49,6 +45,7 @@ class ToolsManager:
                     'repo': 'https://github.com/blacklanternsecurity/bbot.git',
                     'path': self.tools_dir / 'bbot',
                     'requirements': 'requirements.txt',
+                    'install_cmd': 'pipx install bbot',
                     'main_script': 'bbot',
                     'description': 'Recursive internet scanner with advanced OSINT capabilities'
                 }
@@ -60,6 +57,7 @@ class ToolsManager:
                     'repo': 'https://github.com/maurosoria/dirsearch.git',
                     'path': self.tools_dir / 'dirsearch',
                     'requirements': 'requirements.txt',
+                    'install_cmd': 'pip install -r requirements.txt',
                     'main_script': 'dirsearch.py',
                     'description': 'Fast web path scanner with multiple wordlists'
                 },
@@ -67,6 +65,7 @@ class ToolsManager:
                     'repo': 'https://github.com/projectdiscovery/katana.git',
                     'path': self.tools_dir / 'katana',
                     'requirements': None,
+                    'install_cmd': 'CGO_ENABLED=1 go install github.com/projectdiscovery/katana/cmd/katana@latest',
                     'main_script': 'katana',
                     'description': 'Next-generation crawling and spidering framework'
                 }
@@ -78,6 +77,7 @@ class ToolsManager:
                     'repo': 'https://github.com/sqlmapproject/sqlmap.git',
                     'path': self.tools_dir / 'sqlmap-dev',
                     'requirements': None,
+                    'install_cmd': None,
                     'main_script': 'sqlmap.py',
                     'description': 'Advanced SQL injection testing tool'
                 },
@@ -85,19 +85,9 @@ class ToolsManager:
                     'repo': 'https://github.com/DanMcInerney/xsscrapy.git',
                     'path': self.tools_dir / 'xsscrapy',
                     'requirements': 'requirements.txt',
+                    'install_cmd': 'pip install -r requirements.txt',
                     'main_script': 'xsscrapy.py',
                     'description': 'Fast, thorough XSS/SQLi spider with comprehensive testing'
-                }
-            },
-            
-            # Wordlists and Resources
-            'resources': {
-                'seclists': {
-                    'repo': 'https://github.com/danielmiessler/SecLists.git',
-                    'path': self.tools_dir / 'SecLists',
-                    'requirements': None,
-                    'main_script': None,
-                    'description': 'Collection of multiple types of lists for security testing'
                 }
             }
         }
@@ -107,15 +97,13 @@ class ToolsManager:
             'recon': {
                 'httprobe': {
                     'package': 'github.com/tomnomnom/httprobe',
+                    'install_cmd': 'go install github.com/tomnomnom/httprobe@latest',
                     'description': 'HTTP probe tool for finding live hosts'
                 },
                 'waybackurls': {
                     'package': 'github.com/tomnomnom/waybackurls',
+                    'install_cmd': 'go install github.com/tomnomnom/waybackurls@latest',
                     'description': 'Wayback machine URL finder'
-                },
-                'aquatone': {
-                    'package': 'github.com/michenriksen/aquatone',
-                    'description': 'Visual recon tool for web applications'
                 }
             }
         }
@@ -154,53 +142,50 @@ class ToolsManager:
             print("[-] Unsupported operating system")
             return False
 
-    def install_python_tool(self, tool_name: str) -> bool:
+    def install_python_tool(self, tool_name: str, tool_info: dict) -> bool:
         """Install a Python tool"""
-        if tool_name not in self.tools:
-            print(f"[-] Unknown tool: {tool_name}")
-            return False
-
-        tool = self.tools[tool_name]
         try:
-            # Clone repository
-            if not tool['path'].exists():
-                print(f"[+] Installing {tool_name}...")
-                subprocess.run(['git', 'clone', tool['repo'], str(tool['path'])], check=True)
+            print(f"[+] Installing {tool_name}...")
             
-            # Install requirements if any
-            if tool['requirements']:
-                req_file = tool['path'] / tool['requirements']
-                if req_file.exists():
-                    subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', str(req_file)], check=True)
+            # Clone repository if it doesn't exist
+            if not tool_info['path'].exists():
+                subprocess.run(['git', 'clone', tool_info['repo'], str(tool_info['path'])], check=True)
             
-            # Special handling for massdns
-            if tool_name == 'massdns':
-                subprocess.run(['make'], cwd=tool['path'], check=True)
+            # Change to tool directory
+            os.chdir(tool_info['path'])
             
-            # Special handling for seclists
-            if tool_name == 'seclists':
-                dns_file = tool['path'] / 'Discovery' / 'DNS' / 'dns-Jhaddix.txt'
-                if dns_file.exists():
-                    with open(dns_file, 'r') as f:
-                        lines = f.readlines()
-                    with open(dns_file, 'w') as f:
-                        f.writelines(lines[:-14])
+            # Install using the specified command
+            if tool_info['install_cmd']:
+                if tool_info['install_cmd'].startswith('sudo'):
+                    subprocess.run(tool_info['install_cmd'].split(), check=True)
+                else:
+                    subprocess.run(tool_info['install_cmd'].split(), check=True)
             
+            print(f"[+] {tool_name} installed successfully")
             return True
+            
         except subprocess.CalledProcessError as e:
             print(f"[-] Error installing {tool_name}: {str(e)}")
             return False
+        finally:
+            # Return to original directory
+            os.chdir(self.tools_dir)
 
-    def install_go_tool(self, tool_name: str) -> bool:
+    def install_go_tool(self, tool_name: str, tool_info: dict) -> bool:
         """Install a Go tool"""
-        if tool_name not in self.go_tools:
-            print(f"[-] Unknown Go tool: {tool_name}")
-            return False
-
         try:
             print(f"[+] Installing {tool_name}...")
-            subprocess.run(['go', 'get', '-u', self.go_tools[tool_name]['package']], check=True)
+            
+            # Use the specified install command
+            if tool_info['install_cmd']:
+                subprocess.run(tool_info['install_cmd'].split(), check=True)
+            else:
+                # Fallback to default go install
+                subprocess.run(['go', 'install', tool_info['package'] + '@latest'], check=True)
+            
+            print(f"[+] {tool_name} installed successfully")
             return True
+            
         except subprocess.CalledProcessError as e:
             print(f"[-] Error installing {tool_name}: {str(e)}")
             return False
@@ -220,42 +205,12 @@ class ToolsManager:
         # Install Python tools
         for category, tools in self.tools.items():
             for tool_name, tool_info in tools.items():
-                print(f"[+] Installing {tool_name}...")
-                try:
-                    # Clone repository if it doesn't exist
-                    if not os.path.exists(tool_info['path']):
-                        subprocess.run(['git', 'clone', tool_info['repo'], str(tool_info['path'])], check=True)
-                    
-                    # Install Python dependencies
-                    if tool_info['requirements']:
-                        requirements_file = tool_info['path'] / tool_info['requirements']
-                        if requirements_file.exists():
-                            subprocess.run([
-                                sys.executable, '-m', 'pip', 'install', '-r',
-                                str(requirements_file)
-                            ], check=True)
-                    
-                    # Special handling for massdns
-                    if tool_name == 'massdns':
-                        subprocess.run(['make'], cwd=tool_info['path'], check=True)
-                    
-                    print(f"[+] {tool_name} installed successfully")
-                except subprocess.CalledProcessError as e:
-                    print(f"[-] Error installing {tool_name}: {str(e)}")
-                    continue
+                self.install_python_tool(tool_name, tool_info)
         
         # Install Go tools
         for category, tools in self.go_tools.items():
             for tool_name, tool_info in tools.items():
-                print(f"[+] Installing {tool_name}...")
-                try:
-                    subprocess.run([
-                        'go', 'install', tool_info['package'] + '@latest'
-                    ], check=True)
-                    print(f"[+] {tool_name} installed successfully")
-                except subprocess.CalledProcessError as e:
-                    print(f"[-] Error installing {tool_name}: {str(e)}")
-                    continue
+                self.install_go_tool(tool_name, tool_info)
         
         print("[+] Tool installation completed")
         return True
@@ -325,13 +280,13 @@ class ToolsManager:
         # Install Python tools in category
         if category in self.tools:
             for tool_name in self.tools[category]:
-                if not self.install_python_tool(tool_name):
+                if not self.install_python_tool(tool_name, self.tools[category][tool_name]):
                     success = False
         
         # Install Go tools in category
         if category in self.go_tools:
             for tool_name in self.go_tools[category]:
-                if not self.install_go_tool(tool_name):
+                if not self.install_go_tool(tool_name, self.go_tools[category][tool_name]):
                     success = False
         
         return success
