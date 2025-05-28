@@ -218,8 +218,8 @@ class ToolsManager:
             return False
         
         # Install Python tools
-        for tool_name, tool_info in self.tools.items():
-            if tool_info['type'] == 'python':
+        for category, tools in self.tools.items():
+            for tool_name, tool_info in tools.items():
                 print(f"[+] Installing {tool_name}...")
                 try:
                     # Clone repository if it doesn't exist
@@ -235,22 +235,27 @@ class ToolsManager:
                                 str(requirements_file)
                             ], check=True)
                     
+                    # Special handling for massdns
+                    if tool_name == 'massdns':
+                        subprocess.run(['make'], cwd=tool_info['path'], check=True)
+                    
                     print(f"[+] {tool_name} installed successfully")
                 except subprocess.CalledProcessError as e:
                     print(f"[-] Error installing {tool_name}: {str(e)}")
                     continue
         
         # Install Go tools
-        for tool_name, tool_info in self.go_tools.items():
-            print(f"[+] Installing {tool_name}...")
-            try:
-                subprocess.run([
-                    'go', 'install', tool_info['package'] + '@latest'
-                ], check=True)
-                print(f"[+] {tool_name} installed successfully")
-            except subprocess.CalledProcessError as e:
-                print(f"[-] Error installing {tool_name}: {str(e)}")
-                continue
+        for category, tools in self.go_tools.items():
+            for tool_name, tool_info in tools.items():
+                print(f"[+] Installing {tool_name}...")
+                try:
+                    subprocess.run([
+                        'go', 'install', tool_info['package'] + '@latest'
+                    ], check=True)
+                    print(f"[+] {tool_name} installed successfully")
+                except subprocess.CalledProcessError as e:
+                    print(f"[-] Error installing {tool_name}: {str(e)}")
+                    continue
         
         print("[+] Tool installation completed")
         return True
