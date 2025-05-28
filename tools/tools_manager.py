@@ -21,7 +21,7 @@ class ToolsManager:
                     'repo': 'https://github.com/aboul3la/Sublist3r.git',
                     'path': self.tools_dir / 'Sublist3r',
                     'requirements': 'requirements.txt',
-                    'install_cmd': 'sudo pip install -r requirements.txt',
+                    'install_cmd': 'pip install -r requirements.txt',
                     'main_script': 'sublist3r.py',
                     'description': 'Subdomain enumeration tool using multiple sources'
                 },
@@ -65,7 +65,7 @@ class ToolsManager:
                     'repo': 'https://github.com/projectdiscovery/katana.git',
                     'path': self.tools_dir / 'katana',
                     'requirements': None,
-                    'install_cmd': 'CGO_ENABLED=1 go install github.com/projectdiscovery/katana/cmd/katana@latest',
+                    'install_cmd': 'go install github.com/projectdiscovery/katana/cmd/katana@latest',
                     'main_script': 'katana',
                     'description': 'Next-generation crawling and spidering framework'
                 }
@@ -112,12 +112,6 @@ class ToolsManager:
         """Install system dependencies"""
         print("[+] Installing system dependencies...")
         
-        # Check if running as root
-        if os.geteuid() != 0:
-            print("[-] This script needs to be run as root (sudo) to install system dependencies")
-            print("[*] Please run: sudo python tools_manager.py --install")
-            return False
-        
         # Define dependencies based on OS
         if os.path.exists('/etc/debian_version'):  # Debian/Ubuntu/Kali
             dependencies = [
@@ -131,9 +125,9 @@ class ToolsManager:
             ]
             try:
                 # Update package list first
-                subprocess.run(['apt', 'update'], check=True)
+                subprocess.run(['sudo', 'apt', 'update'], check=True)
                 # Install dependencies
-                subprocess.run(['apt', 'install', '-y'] + dependencies, check=True)
+                subprocess.run(['sudo', 'apt', 'install', '-y'] + dependencies, check=True)
                 return True
             except subprocess.CalledProcessError as e:
                 print(f"[-] Error installing system dependencies: {str(e)}")
@@ -156,10 +150,16 @@ class ToolsManager:
             
             # Install using the specified command
             if tool_info['install_cmd']:
-                if tool_info['install_cmd'].startswith('sudo'):
-                    subprocess.run(tool_info['install_cmd'].split(), check=True)
+                # Split command to check if sudo is needed
+                cmd_parts = tool_info['install_cmd'].split()
+                if cmd_parts[0] == 'sudo':
+                    # Remove sudo from command parts
+                    cmd_parts = cmd_parts[1:]
+                    # Run with sudo
+                    subprocess.run(['sudo'] + cmd_parts, check=True)
                 else:
-                    subprocess.run(tool_info['install_cmd'].split(), check=True)
+                    # Run without sudo
+                    subprocess.run(cmd_parts, check=True)
             
             print(f"[+] {tool_name} installed successfully")
             return True
@@ -178,7 +178,17 @@ class ToolsManager:
             
             # Use the specified install command
             if tool_info['install_cmd']:
-                subprocess.run(tool_info['install_cmd'].split(), check=True)
+                # Handle environment variables
+                if 'CGO_ENABLED=1' in tool_info['install_cmd']:
+                    # Split the command and set environment variable
+                    cmd_parts = tool_info['install_cmd'].split()
+                    env = os.environ.copy()
+                    env['CGO_ENABLED'] = '1'
+                    # Remove the environment variable from command
+                    cmd = [part for part in cmd_parts if part != 'CGO_ENABLED=1']
+                    subprocess.run(cmd, env=env, check=True)
+                else:
+                    subprocess.run(tool_info['install_cmd'].split(), check=True)
             else:
                 # Fallback to default go install
                 subprocess.run(['go', 'install', tool_info['package'] + '@latest'], check=True)
@@ -332,8 +342,10 @@ def main():
     manager = ToolsManager()
     
     if args.install:
+        print("[*] Note: Some commands may require sudo privileges. You will be prompted when needed.")
         manager.install()
     elif args.install_category:
+        print("[*] Note: Some commands may require sudo privileges. You will be prompted when needed.")
         manager.install_category(args.install_category)
     elif args.list:
         tools = manager.list_tools()
