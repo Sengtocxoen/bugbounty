@@ -257,13 +257,13 @@ class BugBountyScanner:
         try:
             print("[+] Running BBOT scanner...")
             bbot_output = recon_dir / 'bbot_results'
-            # List available presets first
-            subprocess.run(['bbot', '-lm'], check=True)
-            # Run with individual modules instead of presets
+            # Run with individual modules
             subprocess.run([
                 'bbot',
                 '-t', target,
-                '-m', 'subdomain,cloud,email',
+                '-m', 'subdomain',
+                '-m', 'cloud',
+                '-m', 'email',
                 '-o', str(bbot_output),
                 '--json',
                 '--allow-deadly',
@@ -278,8 +278,10 @@ class BugBountyScanner:
         try:
             print("[+] Running Sublist3r...")
             sublist3r_output = recon_dir / 'sublist3r.txt'
-            # Update Sublist3r to handle CSRF token error
             sublist3r_script = Path(__file__).parent.parent / 'tools' / 'Sublist3r' / 'sublist3r.py'
+            
+            # Create a temporary copy of the script with our modifications
+            temp_script = recon_dir / 'sublist3r_temp.py'
             if sublist3r_script.exists():
                 content = sublist3r_script.read_text()
                 # Add error handling for CSRF token
@@ -287,14 +289,23 @@ class BugBountyScanner:
                     'token = csrf_regex.findall(resp)[0]',
                     'tokens = csrf_regex.findall(resp)\ntoken = tokens[0] if tokens else ""'
                 )
-                sublist3r_script.write_text(content)
+                # Write to temporary file instead of modifying original
+                temp_script.write_text(content)
+                script_to_run = temp_script
+            else:
+                script_to_run = sublist3r_script
             
             subprocess.run([
                 'python3',
-                str(sublist3r_script),
+                str(script_to_run),
                 '-d', urlparse(target).netloc,
                 '-o', str(sublist3r_output)
             ], check=True)
+            
+            # Clean up temporary script
+            if temp_script.exists():
+                temp_script.unlink()
+                
             if sublist3r_output.exists():
                 results['sublist3r'] = sublist3r_output.read_text()
         except subprocess.CalledProcessError as e:
