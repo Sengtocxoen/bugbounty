@@ -120,21 +120,38 @@ class ToolsManager:
             }
         }
 
-    def install_system_dependencies(self) -> bool:
+    def install_system_dependencies(self):
         """Install system dependencies"""
-        try:
-            if sys.platform == 'linux':
-                subprocess.run(['sudo', 'apt-get', 'update'], check=True)
-                subprocess.run(['sudo', 'apt-get', 'install', '-y',
-                              'python3-pip', 'python3-dev', 'git', 'wget', 'curl',
-                              'nmap', 'chromium-browser'], check=True)
-            elif sys.platform == 'darwin':
-                subprocess.run(['brew', 'update'], check=True)
-                subprocess.run(['brew', 'install', 'python3', 'git', 'wget', 'curl',
-                              'nmap', 'chromium'], check=True)
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"[-] Error installing system dependencies: {str(e)}")
+        print("[+] Installing system dependencies...")
+        
+        # Check if running as root
+        if os.geteuid() != 0:
+            print("[-] This script needs to be run as root (sudo) to install system dependencies")
+            print("[*] Please run: sudo python tools_manager.py --install")
+            return False
+        
+        # Define dependencies based on OS
+        if os.path.exists('/etc/debian_version'):  # Debian/Ubuntu/Kali
+            dependencies = [
+                'python3-pip',
+                'python3-dev',
+                'git',
+                'wget',
+                'curl',
+                'nmap',
+                'chromium'
+            ]
+            try:
+                # Update package list first
+                subprocess.run(['apt', 'update'], check=True)
+                # Install dependencies
+                subprocess.run(['apt', 'install', '-y'] + dependencies, check=True)
+                return True
+            except subprocess.CalledProcessError as e:
+                print(f"[-] Error installing system dependencies: {str(e)}")
+                return False
+        else:
+            print("[-] Unsupported operating system")
             return False
 
     def install_python_tool(self, tool_name: str) -> bool:
@@ -188,25 +205,54 @@ class ToolsManager:
             print(f"[-] Error installing {tool_name}: {str(e)}")
             return False
 
-    def install_all(self) -> bool:
+    def install(self):
         """Install all tools"""
+        print("[+] Installing tools...")
+        
+        # Create tools directory if it doesn't exist
+        os.makedirs(self.tools_dir, exist_ok=True)
+        
         # Install system dependencies
         if not self.install_system_dependencies():
+            print("[-] Failed to install system dependencies")
             return False
-
+        
         # Install Python tools
-        for category, tools in self.tools.items():
-            for tool_name in tools:
-                if not self.install_python_tool(tool_name):
-                    return False
-
+        for tool_name, tool_info in self.tools.items():
+            if tool_info['type'] == 'python':
+                print(f"[+] Installing {tool_name}...")
+                try:
+                    # Clone repository if it doesn't exist
+                    if not os.path.exists(tool_info['path']):
+                        subprocess.run(['git', 'clone', tool_info['repo'], str(tool_info['path'])], check=True)
+                    
+                    # Install Python dependencies
+                    if tool_info['requirements']:
+                        requirements_file = tool_info['path'] / tool_info['requirements']
+                        if requirements_file.exists():
+                            subprocess.run([
+                                sys.executable, '-m', 'pip', 'install', '-r',
+                                str(requirements_file)
+                            ], check=True)
+                    
+                    print(f"[+] {tool_name} installed successfully")
+                except subprocess.CalledProcessError as e:
+                    print(f"[-] Error installing {tool_name}: {str(e)}")
+                    continue
+        
         # Install Go tools
-        for category, tools in self.go_tools.items():
-            for tool_name in tools:
-                if not self.install_go_tool(tool_name):
-                    return False
-
-        print("[+] All tools have been installed successfully!")
+        for tool_name, tool_info in self.go_tools.items():
+            print(f"[+] Installing {tool_name}...")
+            try:
+                subprocess.run([
+                    'go', 'install', tool_info['package'] + '@latest'
+                ], check=True)
+                print(f"[+] {tool_name} installed successfully")
+            except subprocess.CalledProcessError as e:
+                print(f"[-] Error installing {tool_name}: {str(e)}")
+                continue
+        
+        print("[+] Tool installation completed")
         return True
 
     def get_tool_path(self, tool_name: str) -> Optional[Path]:
@@ -285,7 +331,7 @@ class ToolsManager:
         
         return success
 
-    def run_category_scan(self, category: str, target: str, args: List[str] = None) -> Dict[str, Any]:
+    def run_category_scan(self, category: str, target: str, args: List[str] = None) -> Dict[str, any]:
         """Run all tools in a specific category against a target"""
         results = {}
         
@@ -326,7 +372,7 @@ def main():
     manager = ToolsManager()
     
     if args.install:
-        manager.install_all()
+        manager.install()
     elif args.install_category:
         manager.install_category(args.install_category)
     elif args.list:
