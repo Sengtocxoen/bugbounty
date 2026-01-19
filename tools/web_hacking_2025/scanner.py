@@ -9,6 +9,7 @@ Runs all technique scanners against target domains with:
 - Resumable scans
 - Real-time output
 - Findings categorized by severity
+- Bug bounty program compliance (User-Agent, rate limits, scope)
 
 Usage:
   # Single domain
@@ -22,6 +23,9 @@ Usage:
 
   # Run specific techniques only
   python scanner.py example.com --techniques smuggling,cache,xss
+
+  # Bug bounty mode with H1 username
+  python scanner.py example.com --program amazon --h1-user myusername
 
   # Custom output directory
   python scanner.py example.com -o ./my_results
@@ -52,39 +56,83 @@ from .auth_bypass import AuthBypass
 from .xss_csrf import CrossSiteAttacks
 from .parser_xxe import ParserXXE
 from .ssti_inject import SSTIInjection
+from .ssrf import SSRFDetection
+from .xs_leaks import XSLeaks
+from .framework_vulns import FrameworkVulns
+from .deserialization import Deserialization
+from .protocol_attacks import ProtocolAttacks
+from .bugbounty_config import (
+    get_program_config, detect_program, validate_targets,
+    print_program_rules, ScopeValidator, PROGRAMS
+)
 
 
-# Available technique scanners
+# Available technique scanners - 12 techniques covering 2025 nominations
 TECHNIQUE_SCANNERS = {
+    # Request/Response Manipulation
     "smuggling": {
         "class": HTTPSmuggling,
         "name": "HTTP Request Smuggling",
-        "description": "CL.TE, TE.CL, HTTP/2 downgrade attacks"
+        "description": "CL.TE, TE.CL, TE.TE, HTTP/2 downgrade, Funky Chunks"
     },
     "cache": {
         "class": CachePoisoning,
         "name": "Cache Poisoning",
-        "description": "Unkeyed headers, cache deception, path normalization"
+        "description": "Unkeyed headers, cache deception, stale-while-revalidate, path normalization"
     },
+    # Authentication & Authorization
     "auth": {
         "class": AuthBypass,
         "name": "Auth/Authz Bypass",
-        "description": "OAuth, SAML, path traversal, IDOR"
+        "description": "OAuth redirect, SAML, path/header bypass, IDOR, JWT"
     },
+    # Cross-Site Attacks
     "xss": {
         "class": CrossSiteAttacks,
         "name": "Cross-Site Attacks",
-        "description": "XSS, CSRF, CORS, clickjacking, open redirect"
+        "description": "XSS, DOM clobbering, CSRF, CORS, clickjacking, open redirect"
     },
+    # Parser & XXE
     "parser": {
         "class": ParserXXE,
         "name": "Parser/XXE",
-        "description": "XXE, JSON parser differentials, URL confusion"
+        "description": "XXE variants, JSON differential, URL confusion, polyglots"
     },
+    # Injection
     "inject": {
         "class": SSTIInjection,
         "name": "SSTI/Injection",
-        "description": "SSTI, SQLi, command injection, PDF exploits"
+        "description": "SSTI, SQLi, CMDi, PDF exploits, prototype pollution"
+    },
+    # Server-Side
+    "ssrf": {
+        "class": SSRFDetection,
+        "name": "SSRF",
+        "description": "Cloud metadata, internal access, protocol wrappers, bypass techniques"
+    },
+    # Information Disclosure
+    "xsleaks": {
+        "class": XSLeaks,
+        "name": "XS-Leaks",
+        "description": "ETag oracle, timing attacks, error oracle, frame counting"
+    },
+    # Framework-Specific
+    "framework": {
+        "class": FrameworkVulns,
+        "name": "Framework Vulns",
+        "description": "ASP.NET, Spring/Java, PHP, Node.js, Rails, ORM injection"
+    },
+    # Deserialization
+    "deser": {
+        "class": Deserialization,
+        "name": "Deserialization",
+        "description": "Java, .NET ViewState, PHP, Python pickle, phar://"
+    },
+    # Protocol-Specific
+    "protocol": {
+        "class": ProtocolAttacks,
+        "name": "Protocol Attacks",
+        "description": "WebSocket CSWSH, GraphQL, HTTP/2, gRPC, SSE"
     },
 }
 
@@ -296,16 +344,30 @@ def main():
 Examples:
   %(prog)s example.com
   %(prog)s -f domains.txt --resume
-  %(prog)s example.com --techniques smuggling,cache,xss
+  %(prog)s example.com --techniques smuggling,cache,xss,ssrf
   %(prog)s example.com -o ./results --rate 3
 
-Available techniques:
-  smuggling  - HTTP Request Smuggling (CL.TE, TE.CL, H2)
-  cache      - Cache Poisoning (unkeyed headers, deception)
-  auth       - Auth/Authz Bypass (OAuth, SAML, path bypass)
-  xss        - Cross-Site Attacks (XSS, CSRF, CORS)
-  parser     - Parser/XXE (XXE, JSON differential, URL)
-  inject     - SSTI/Injection (SSTI, SQLi, CMDi, PDF)
+Bug Bounty Mode:
+  %(prog)s example.amazon.com --program amazon --h1-user myusername
+  %(prog)s test.myshopify.com --program shopify --h1-user myusername
+
+Available techniques (11 categories):
+  smuggling  - HTTP Request Smuggling (CL.TE, TE.CL, H2, Funky Chunks)
+  cache      - Cache Poisoning (unkeyed headers, deception, SWR)
+  auth       - Auth/Authz Bypass (OAuth, SAML, path/header bypass)
+  xss        - Cross-Site Attacks (XSS, CSRF, CORS, clickjacking)
+  parser     - Parser/XXE (XXE, JSON differential, URL confusion)
+  inject     - SSTI/Injection (SSTI, SQLi, CMDi, PDF exploits)
+  ssrf       - SSRF (cloud metadata, internal access, bypass)
+  xsleaks    - XS-Leaks (ETag, timing, error oracles)
+  framework  - Framework Vulns (ASP.NET, Spring, PHP, Node.js)
+  deser      - Deserialization (Java, .NET, PHP, Python)
+  protocol   - Protocol Attacks (WebSocket, GraphQL, HTTP/2, gRPC)
+
+Bug Bounty Programs:
+  amazon     - Amazon VRP (uses amazonvrpresearcher_<user> agent)
+  shopify    - Shopify Bug Bounty
+  generic    - Generic configuration
         """
     )
 
@@ -314,10 +376,10 @@ Available techniques:
     parser.add_argument('-o', '--output', default='./web_hacking_2025_results',
                        help='Output directory (default: ./web_hacking_2025_results)')
     parser.add_argument('--techniques', help='Comma-separated list of techniques to run')
-    parser.add_argument('--rate', type=float, default=5.0,
-                       help='Rate limit (requests per second, default: 5)')
-    parser.add_argument('--user-agent', default='Mozilla/5.0 (compatible; SecurityResearch/1.0)',
-                       help='Custom User-Agent string')
+    parser.add_argument('--rate', type=float, default=None,
+                       help='Rate limit (requests per second). Auto-set by --program')
+    parser.add_argument('--user-agent', default=None,
+                       help='Custom User-Agent string. Auto-set by --program')
     parser.add_argument('--resume', action='store_true',
                        help='Resume previous scan')
     parser.add_argument('--threads', type=int, default=3,
@@ -327,16 +389,33 @@ Available techniques:
     parser.add_argument('--list-techniques', action='store_true',
                        help='List available techniques and exit')
 
+    # Bug Bounty Program options
+    parser.add_argument('--program', choices=['amazon', 'shopify', 'generic'],
+                       help='Bug bounty program (sets User-Agent, rate limit, scope)')
+    parser.add_argument('--h1-user', '--username', dest='h1_user',
+                       help='HackerOne username for program compliance')
+    parser.add_argument('--validate-scope', action='store_true',
+                       help='Validate domains against program scope before scanning')
+    parser.add_argument('--show-rules', action='store_true',
+                       help='Show program rules and exit')
+
     args = parser.parse_args()
 
     # List techniques
     if args.list_techniques:
-        print("\nAvailable techniques:")
-        print("-" * 50)
+        print("\nAvailable techniques (11 categories, 2025 nominations):")
+        print("-" * 60)
         for tech_id, info in TECHNIQUE_SCANNERS.items():
             print(f"  {tech_id:12} - {info['name']}")
             print(f"               {info['description']}")
         print()
+        return
+
+    # Show program rules
+    if args.show_rules:
+        program_name = args.program or 'generic'
+        program = get_program_config(program_name)
+        print_program_rules(program)
         return
 
     # Get domains
@@ -357,11 +436,58 @@ Available techniques:
         if invalid:
             parser.error(f"Invalid techniques: {invalid}. Use --list-techniques to see available options.")
 
+    # Configure for bug bounty program
+    rate_limit = args.rate or 5.0
+    user_agent = args.user_agent or 'Mozilla/5.0 (compatible; SecurityResearch/1.0)'
+
+    if args.program:
+        program = get_program_config(args.program)
+
+        if args.h1_user:
+            user_agent = program.get_user_agent(args.h1_user)
+            print(f"[*] Using User-Agent: {user_agent}")
+        else:
+            print(f"[!] Warning: --h1-user not set. Using default User-Agent")
+            print(f"    For {program.name}, set --h1-user to ensure compliance")
+
+        # Use program rate limit if not overridden
+        if args.rate is None:
+            rate_limit = program.rate_limit
+            print(f"[*] Using rate limit: {rate_limit} req/s (from {program.name} config)")
+
+        # Validate scope if requested
+        if args.validate_scope:
+            print(f"\n[*] Validating scope for {program.name}...")
+            validator = ScopeValidator(program)
+            valid_domains = validator.filter_domains(domains)
+
+            excluded = set(domains) - set(valid_domains)
+            if excluded:
+                print(f"[!] Excluded {len(excluded)} out-of-scope domains:")
+                for d in list(excluded)[:10]:
+                    print(f"    - {d}")
+                if len(excluded) > 10:
+                    print(f"    ... and {len(excluded) - 10} more")
+
+            domains = valid_domains
+            if not domains:
+                print("[-] No in-scope domains to scan!")
+                return
+
+            print(f"[+] {len(domains)} domains in scope")
+
+        # Print special rules
+        if program.special_rules and not args.quiet:
+            print(f"\n[!] {program.name} Special Rules:")
+            for rule_name, rule_text in list(program.special_rules.items())[:3]:
+                print(f"    - {rule_text[:80]}...")
+            print()
+
     # Run scanner
     scanner = WebHackingScanner(
         output_dir=Path(args.output),
-        rate_limit=args.rate,
-        user_agent=args.user_agent,
+        rate_limit=rate_limit,
+        user_agent=user_agent,
         techniques=techniques,
         verbose=not args.quiet,
         threads=args.threads
