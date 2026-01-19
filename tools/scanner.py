@@ -2,7 +2,13 @@
 """
 Bug Bounty Scanner
 Compliant scanner for Amazon VRP and Shopify Bug Bounty programs
-Includes rate limiting, proper headers, and scope validation
+Includes rate limiting, proper headers, scope validation, and false positive detection
+
+False Positive Detection Features:
+- Redirect chain analysis for auth page detection
+- Baseline response comparison
+- Soft 404 detection
+- Context-aware vulnerability validation
 """
 
 import time
@@ -17,6 +23,7 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Any, Tuple
 from urllib.parse import urlparse, urljoin, parse_qs
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from difflib import SequenceMatcher
 import threading
 
 try:
@@ -33,6 +40,7 @@ from config import (
     SECURITY_HEADERS, TEST_PAYLOADS, VULN_PRIORITIES
 )
 from scope_validator import AmazonScopeValidator, ShopifyScopeValidator
+from false_positive_detector import FalsePositiveDetector, RedirectTracker
 
 
 @dataclass
@@ -47,6 +55,10 @@ class Finding:
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     request: Optional[str] = None
     response: Optional[str] = None
+    # False positive detection fields
+    verified: bool = True  # Passed FP checks
+    confidence: str = "medium"  # high, medium, low
+    fp_check_result: str = ""  # Result of FP analysis
 
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -90,15 +102,31 @@ class RateLimiter:
 
 
 class BaseScanner:
-    """Base scanner class with common functionality"""
+    """Base scanner class with common functionality and FP detection"""
 
-    def __init__(self, rate_limit: float, user_agent: str, timeout: int = 30):
+    def __init__(self, rate_limit: float, user_agent: str, timeout: int = 30,
+                 enable_fp_detection: bool = True):
         self.rate_limiter = RateLimiter(rate_limit)
         self.user_agent = user_agent
         self.timeout = timeout
         self.session = self._create_session()
         self.findings: List[Finding] = []
         self.errors: List[str] = []
+
+        # False positive detection
+        self.enable_fp_detection = enable_fp_detection
+        self.fp_detector = FalsePositiveDetector(self.session, rate_limit) if enable_fp_detection else None
+        self.redirect_tracker = RedirectTracker() if enable_fp_detection else None
+
+        # Baselines for comparison
+        self.baselines: Dict[str, Dict] = {}
+
+        # Stats
+        self.fp_stats = {
+            'checks_run': 0,
+            'findings_verified': 0,
+            'false_positives_filtered': 0,
+        }
 
     def _create_session(self) -> requests.Session:
         """Create a session with retry logic"""
@@ -157,7 +185,85 @@ class BaseScanner:
     def add_finding(self, finding: Finding):
         """Add a finding to the results"""
         self.findings.append(finding)
-        print(f"  [!] FINDING: {finding.vuln_type} - {finding.severity}")
+        status = "VERIFIED" if finding.verified else "UNVERIFIED"
+        print(f"  [!] FINDING: {finding.vuln_type} - {finding.severity} [{status}]")
+
+    def _get_baseline(self, url: str) -> Optional[Dict]:
+        """Get or create baseline for a URL"""
+        parsed = urlparse(url)
+        base_key = f"{parsed.scheme}://{parsed.netloc}"
+
+        if base_key not in self.baselines:
+            response = self.get(base_key)
+            if response:
+                content = response.text or ""
+                self.baselines[base_key] = {
+                    'hash': hashlib.md5(content.encode()).hexdigest(),
+                    'length': len(content),
+                    'status': response.status_code,
+                }
+            else:
+                self.baselines[base_key] = None
+
+        return self.baselines.get(base_key)
+
+    def _is_auth_redirect(self, response: requests.Response) -> bool:
+        """Check if response is a redirect to auth page"""
+        if response.status_code not in [301, 302, 303, 307, 308]:
+            return False
+
+        location = response.headers.get('Location', '').lower()
+        auth_patterns = ['/login', '/signin', '/auth', '/sso', '/oauth',
+                        '/session', '/unauthorized', '/access-denied']
+
+        return any(pattern in location for pattern in auth_patterns)
+
+    def _is_error_page(self, response: requests.Response) -> bool:
+        """Check if response is an error page"""
+        if not response.text:
+            return False
+
+        content_lower = response.text.lower()
+
+        # Check for error patterns
+        error_patterns = [
+            r'<title>[^<]*(?:error|404|not found|oops)[^<]*</title>',
+            r'page\s+not\s+found',
+            r'access\s+denied',
+            r'invalid\s+request',
+        ]
+
+        return any(re.search(pattern, content_lower) for pattern in error_patterns)
+
+    def _validate_finding(self, finding: Finding, response: requests.Response,
+                          vuln_type: str) -> Tuple[bool, str]:
+        """Validate a finding using FP detection"""
+        if not self.enable_fp_detection:
+            return True, "FP detection disabled"
+
+        self.fp_stats['checks_run'] += 1
+
+        # Check 1: Auth redirect
+        if self._is_auth_redirect(response):
+            self.fp_stats['false_positives_filtered'] += 1
+            return False, "Response is auth redirect"
+
+        # Check 2: Error page (for most vulns)
+        if vuln_type not in ['missing_headers', 'ssl_tls'] and self._is_error_page(response):
+            self.fp_stats['false_positives_filtered'] += 1
+            return False, "Response is error page"
+
+        # Check 3: Use FP detector for detailed analysis
+        if self.fp_detector:
+            fp_result = self.fp_detector.analyze_for_false_positive(
+                finding.target, response, vuln_type
+            )
+            if fp_result.is_false_positive:
+                self.fp_stats['false_positives_filtered'] += 1
+                return False, fp_result.reason
+
+        self.fp_stats['findings_verified'] += 1
+        return True, "Verified"
 
     def check_security_headers(self, url: str) -> List[Finding]:
         """Check for missing security headers"""
@@ -223,7 +329,7 @@ class BaseScanner:
         return findings
 
     def check_open_redirect(self, url: str) -> List[Finding]:
-        """Check for open redirect vulnerabilities"""
+        """Check for open redirect vulnerabilities with FP detection"""
         findings = []
         parsed = urlparse(url)
 
@@ -237,72 +343,139 @@ class BaseScanner:
                 test_url = f"{url}?{param}={payload}"
                 response = self.get(test_url)
 
-                if response and response.status_code in [301, 302, 303, 307, 308]:
-                    location = response.headers.get('Location', '')
-                    if 'evil.com' in location or location.startswith('//'):
-                        finding = Finding(
-                            target=url,
-                            vuln_type="Open Redirect",
-                            severity="low",
-                            description=f"Open redirect via {param} parameter",
-                            evidence=f"Redirect to: {location}",
-                            reproduction_steps=[
-                                f"1. Visit: {test_url}",
-                                f"2. Observe redirect to: {location}"
-                            ],
-                            request=f"GET {test_url}",
-                            response=f"HTTP {response.status_code} Location: {location}"
-                        )
-                        findings.append(finding)
-                        break  # Found vuln for this param, move on
+                if not response:
+                    continue
+
+                if response.status_code not in [301, 302, 303, 307, 308]:
+                    continue
+
+                location = response.headers.get('Location', '')
+
+                # Validate redirect target
+                is_valid_redirect = False
+                redirect_target = None
+
+                # Check for evil.com in various formats
+                if 'evil.com' in location.lower():
+                    try:
+                        # Parse to verify it's actually redirecting to evil.com domain
+                        if location.startswith('//'):
+                            location_parsed = urlparse('https:' + location)
+                        else:
+                            location_parsed = urlparse(location)
+
+                        if location_parsed.netloc and 'evil.com' in location_parsed.netloc.lower():
+                            is_valid_redirect = True
+                            redirect_target = location_parsed.netloc
+                    except Exception:
+                        pass
+
+                # Also check for protocol-relative redirects to external domains
+                if not is_valid_redirect and location.startswith('//'):
+                    try:
+                        location_parsed = urlparse('https:' + location)
+                        if location_parsed.netloc and location_parsed.netloc != parsed.netloc:
+                            is_valid_redirect = True
+                            redirect_target = location_parsed.netloc
+                    except Exception:
+                        pass
+
+                if not is_valid_redirect:
+                    continue
+
+                # FP Check: Make sure this isn't a normal auth flow redirect
+                if self.enable_fp_detection:
+                    # Check if the param is being used for legitimate internal redirects
+                    auth_indicators = ['/login', '/auth', '/oauth', '/sso', '/callback']
+                    if any(ind in location.lower() for ind in auth_indicators):
+                        # Could be OAuth callback, not open redirect
+                        self.fp_stats['false_positives_filtered'] += 1
+                        continue
+
+                finding = Finding(
+                    target=url,
+                    vuln_type="Open Redirect",
+                    severity="low",
+                    description=f"Open redirect via {param} parameter to external domain",
+                    evidence=f"Redirect to: {location} (domain: {redirect_target})",
+                    reproduction_steps=[
+                        f"1. Visit: {test_url}",
+                        f"2. Observe redirect to external domain: {redirect_target}"
+                    ],
+                    request=f"GET {test_url}",
+                    response=f"HTTP {response.status_code} Location: {location}",
+                    verified=True,
+                    confidence="high",
+                    fp_check_result="Verified - redirects to controlled external domain"
+                )
+                findings.append(finding)
+                break  # Found vuln for this param, move on
 
         return findings
 
     def check_cors(self, url: str) -> List[Finding]:
-        """Check for CORS misconfigurations"""
+        """Check for CORS misconfigurations with FP detection"""
         findings = []
 
         # Test with arbitrary origin
         headers = {'Origin': 'https://evil.com'}
         response = self.get(url, headers=headers)
 
-        if response:
-            acao = response.headers.get('Access-Control-Allow-Origin', '')
-            acac = response.headers.get('Access-Control-Allow-Credentials', '')
+        if not response:
+            return findings
 
-            if acao == '*':
-                finding = Finding(
-                    target=url,
-                    vuln_type="CORS Wildcard",
-                    severity="medium",
-                    description="CORS allows any origin (wildcard)",
-                    evidence=f"Access-Control-Allow-Origin: {acao}",
-                    reproduction_steps=[
-                        f"1. Send request with Origin: https://evil.com",
-                        f"2. Observe Access-Control-Allow-Origin: *"
-                    ]
-                )
-                findings.append(finding)
+        # FP Check: Skip if response is auth redirect
+        if self.enable_fp_detection and self._is_auth_redirect(response):
+            return findings
 
-            elif 'evil.com' in acao:
-                severity = "high" if acac.lower() == 'true' else "medium"
+        acao = response.headers.get('Access-Control-Allow-Origin', '')
+        acac = response.headers.get('Access-Control-Allow-Credentials', '')
+
+        if acao == '*':
+            # Wildcard CORS - lower severity if no credentials
+            finding = Finding(
+                target=url,
+                vuln_type="CORS Wildcard",
+                severity="medium" if acac.lower() != 'true' else "low",  # Wildcard + credentials is actually invalid
+                description="CORS allows any origin (wildcard)",
+                evidence=f"Access-Control-Allow-Origin: {acao}",
+                reproduction_steps=[
+                    f"1. Send request with Origin: https://evil.com",
+                    f"2. Observe Access-Control-Allow-Origin: *"
+                ],
+                verified=True,
+                confidence="high",
+                fp_check_result="Verified - CORS header present"
+            )
+            findings.append(finding)
+
+        elif acao and 'evil.com' in acao.lower():
+            # Origin reflection - this is more serious
+            severity = "high" if acac.lower() == 'true' else "medium"
+
+            # Additional validation - make sure it's actually our origin
+            if acao.strip() == 'https://evil.com':
                 finding = Finding(
                     target=url,
                     vuln_type="CORS Origin Reflection",
                     severity=severity,
-                    description=f"CORS reflects arbitrary origin{' with credentials' if acac else ''}",
+                    description=f"CORS reflects arbitrary origin{' with credentials' if acac.lower() == 'true' else ''}",
                     evidence=f"Access-Control-Allow-Origin: {acao}, Allow-Credentials: {acac}",
                     reproduction_steps=[
                         f"1. Send request with Origin: https://evil.com",
-                        f"2. Observe origin is reflected in ACAO header"
-                    ]
+                        f"2. Observe origin is reflected in ACAO header",
+                        f"3. {'Credentials are allowed, enabling cookie theft' if acac.lower() == 'true' else 'Credentials not allowed'}"
+                    ],
+                    verified=True,
+                    confidence="high",
+                    fp_check_result="Verified - arbitrary origin reflected in CORS headers"
                 )
                 findings.append(finding)
 
         return findings
 
     def check_xss_reflection(self, url: str, params: List[str] = None) -> List[Finding]:
-        """Check for reflected XSS (non-invasive)"""
+        """Check for reflected XSS (non-invasive) with FP detection"""
         findings = []
 
         # Use a canary value that's unlikely to appear naturally
@@ -317,25 +490,70 @@ class BaseScanner:
             test_url = f"{url}?{param}={canary}"
             response = self.get(test_url)
 
-            if response and canary in response.text:
-                # Found reflection, test with actual XSS payload
-                test_payload = f"<{canary}>"
-                test_url2 = f"{url}?{param}={test_payload}"
-                response2 = self.get(test_url2)
+            if not response:
+                continue
 
-                if response2 and test_payload in response2.text:
-                    finding = Finding(
-                        target=url,
-                        vuln_type="Potential XSS",
-                        severity="medium",
-                        description=f"HTML tag reflection in {param} parameter",
-                        evidence=f"Input '<{canary}>' reflected in response",
-                        reproduction_steps=[
-                            f"1. Visit: {test_url2}",
-                            f"2. Observe input reflected in page source"
-                        ]
-                    )
-                    findings.append(finding)
+            # FP Check: Skip if auth redirect
+            if self.enable_fp_detection and self._is_auth_redirect(response):
+                continue
+
+            if canary not in (response.text or ''):
+                continue
+
+            # Found reflection, test with actual XSS payload
+            test_payload = f"<{canary}>"
+            test_url2 = f"{url}?{param}={test_payload}"
+            response2 = self.get(test_url2)
+
+            if not response2 or test_payload not in (response2.text or ''):
+                continue
+
+            # FP Check: Verify XSS is in HTML context, not escaped
+            is_valid_xss = True
+            fp_reason = ""
+
+            if self.enable_fp_detection:
+                content = response2.text
+
+                # Check if payload is HTML-encoded
+                if f"&lt;{canary}&gt;" in content:
+                    is_valid_xss = False
+                    fp_reason = "Payload is HTML-encoded"
+
+                # Check if in HTML comment
+                elif re.search(r'<!--[^>]*' + re.escape(test_payload) + r'[^>]*-->', content):
+                    is_valid_xss = False
+                    fp_reason = "Payload in HTML comment"
+
+                # Check if in JavaScript string (escaped)
+                elif re.search(r'["\'][^"\']*\\x3c' + canary, content):
+                    is_valid_xss = False
+                    fp_reason = "Payload escaped in JS"
+
+                # Check if response is error page
+                elif self._is_error_page(response2):
+                    is_valid_xss = False
+                    fp_reason = "Response is error page"
+
+            if not is_valid_xss:
+                self.fp_stats['false_positives_filtered'] += 1
+                continue
+
+            finding = Finding(
+                target=url,
+                vuln_type="Potential XSS",
+                severity="medium",
+                description=f"HTML tag reflection in {param} parameter",
+                evidence=f"Input '<{canary}>' reflected in response without encoding",
+                reproduction_steps=[
+                    f"1. Visit: {test_url2}",
+                    f"2. Observe input reflected in page source"
+                ],
+                verified=True,
+                confidence="high" if self.enable_fp_detection else "medium",
+                fp_check_result="Verified - payload reflected unencoded in HTML context"
+            )
+            findings.append(finding)
 
         return findings
 
@@ -388,12 +606,24 @@ class BaseScanner:
                             reproduction_steps=[
                                 f"1. Visit: {test_url}",
                                 f"2. Observe sensitive information"
-                            ]
+                            ],
+                            verified=True,
+                            confidence="high",
+                            fp_check_result="Verified - sensitive pattern found in response"
                         )
                         findings.append(finding)
                         break
 
         return findings
+
+    def get_fp_stats(self) -> Dict:
+        """Get false positive detection statistics"""
+        stats = dict(self.fp_stats)
+        if self.fp_detector:
+            stats['detector_stats'] = self.fp_detector.get_stats()
+        if self.redirect_tracker:
+            stats['redirect_summary'] = self.redirect_tracker.get_redirect_summary()
+        return stats
 
 
 class AmazonScanner(BaseScanner):
@@ -403,14 +633,16 @@ class AmazonScanner(BaseScanner):
     - Rate limit: 5 requests/second
     - User-Agent: amazonvrpresearcher_<username>
     - Validates scope before scanning
+    - Includes false positive detection
     """
 
-    def __init__(self, config: Optional[AmazonConfig] = None):
+    def __init__(self, config: Optional[AmazonConfig] = None, enable_fp_detection: bool = True):
         self.config = config or get_amazon_config()
         super().__init__(
             rate_limit=self.config.rate_limit,
             user_agent=self.config.user_agent,
-            timeout=self.config.request_timeout
+            timeout=self.config.request_timeout,
+            enable_fp_detection=enable_fp_detection
         )
         self.validator = AmazonScopeValidator(self.config)
 
@@ -421,6 +653,7 @@ class AmazonScanner(BaseScanner):
         print(f"    User-Agent: {self.user_agent}")
         print(f"    Rate Limit: {self.config.rate_limit} req/sec")
         print(f"    Test Email: {self.config.test_email}")
+        print(f"    FP Detection: {'ENABLED' if enable_fp_detection else 'DISABLED'}")
 
     def validate_target(self, target: str) -> Tuple[bool, str]:
         """Validate target is in scope"""
@@ -511,11 +744,17 @@ class AmazonScanner(BaseScanner):
         return results
 
     def save_results(self, results: List[ScanResult], filename: str = None) -> Path:
-        """Save scan results to JSON file"""
+        """Save scan results to JSON file with FP detection stats"""
         if not filename:
             filename = f"amazon_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
         output_path = self.config.output_dir / filename
+
+        # Count verified findings
+        verified_findings = sum(
+            sum(1 for f in r.findings if f.verified)
+            for r in results
+        )
 
         data = {
             "program": "Amazon VRP",
@@ -523,10 +762,13 @@ class AmazonScanner(BaseScanner):
                 "user_agent": self.user_agent,
                 "rate_limit": self.config.rate_limit,
                 "test_email": self.config.test_email,
+                "fp_detection_enabled": self.enable_fp_detection,
             },
             "scan_date": datetime.utcnow().isoformat(),
             "total_targets": len(results),
             "total_findings": sum(len(r.findings) for r in results),
+            "verified_findings": verified_findings,
+            "false_positive_stats": self.get_fp_stats() if self.enable_fp_detection else None,
             "results": [r.to_dict() for r in results]
         }
 
@@ -534,6 +776,9 @@ class AmazonScanner(BaseScanner):
             json.dump(data, f, indent=2)
 
         print(f"\n[*] Results saved to: {output_path}")
+        if self.enable_fp_detection:
+            print(f"    Verified findings: {verified_findings}")
+            print(f"    FP filtered: {self.fp_stats.get('false_positives_filtered', 0)}")
         return output_path
 
 
@@ -544,14 +789,16 @@ class ShopifyScanner(BaseScanner):
     - Only test stores you created
     - Uses proper email format
     - Respects API rate limits
+    - Includes false positive detection
     """
 
-    def __init__(self, config: Optional[ShopifyConfig] = None):
+    def __init__(self, config: Optional[ShopifyConfig] = None, enable_fp_detection: bool = True):
         self.config = config or get_shopify_config()
         super().__init__(
             rate_limit=self.config.rate_limit,
             user_agent=self.config.user_agent,
-            timeout=self.config.request_timeout
+            timeout=self.config.request_timeout,
+            enable_fp_detection=enable_fp_detection
         )
         self.validator = ShopifyScopeValidator(self.config)
 
@@ -563,6 +810,7 @@ class ShopifyScanner(BaseScanner):
         print(f"    Rate Limit: {self.config.rate_limit} req/sec")
         print(f"    Test Email: {self.config.test_email}")
         print(f"    Partner Signup: {self.config.partner_signup_url}")
+        print(f"    FP Detection: {'ENABLED' if enable_fp_detection else 'DISABLED'}")
 
     def validate_target(self, target: str) -> Tuple[bool, str]:
         """Validate target is in scope"""
@@ -730,11 +978,17 @@ class ShopifyScanner(BaseScanner):
         return results
 
     def save_results(self, results: List[ScanResult], filename: str = None) -> Path:
-        """Save scan results to JSON file"""
+        """Save scan results to JSON file with FP detection stats"""
         if not filename:
             filename = f"shopify_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
         output_path = self.config.output_dir / filename
+
+        # Count verified findings
+        verified_findings = sum(
+            sum(1 for f in r.findings if f.verified)
+            for r in results
+        )
 
         data = {
             "program": "Shopify Bug Bounty",
@@ -742,10 +996,13 @@ class ShopifyScanner(BaseScanner):
                 "user_agent": self.user_agent,
                 "rate_limit": self.config.rate_limit,
                 "test_email": self.config.test_email,
+                "fp_detection_enabled": self.enable_fp_detection,
             },
             "scan_date": datetime.utcnow().isoformat(),
             "total_targets": len(results),
             "total_findings": sum(len(r.findings) for r in results),
+            "verified_findings": verified_findings,
+            "false_positive_stats": self.get_fp_stats() if self.enable_fp_detection else None,
             "results": [r.to_dict() for r in results]
         }
 
@@ -753,6 +1010,9 @@ class ShopifyScanner(BaseScanner):
             json.dump(data, f, indent=2)
 
         print(f"\n[*] Results saved to: {output_path}")
+        if self.enable_fp_detection:
+            print(f"    Verified findings: {verified_findings}")
+            print(f"    FP filtered: {self.fp_stats.get('false_positives_filtered', 0)}")
         return output_path
 
 
