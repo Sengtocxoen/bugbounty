@@ -282,6 +282,8 @@ class SSRFDetection(TechniqueScanner):
                         "cloud": metadata["name"],
                         "target": target_url,
                         "endpoint": url,
+                        "method": method,
+                        "response_obj": resp,
                         "evidence": f"Cloud metadata accessible: {metadata['name']} - found '{indicator}'"
                     })
                     break
@@ -331,6 +333,8 @@ class SSRFDetection(TechniqueScanner):
                     "type": "internal_access",
                     "target": target,
                     "endpoint": url,
+                    "method": method,
+                    "response_obj": resp,
                     "response_diff": resp_len - baseline_len,
                     "evidence": f"Response length differs for internal target: {resp_len} vs baseline {baseline_len}"
                 })
@@ -341,6 +345,8 @@ class SSRFDetection(TechniqueScanner):
                     "type": "timing_anomaly",
                     "target": target,
                     "endpoint": url,
+                    "method": method,
+                    "response_obj": resp,
                     "time_diff": resp_time - baseline_time,
                     "evidence": f"Timing anomaly for {target}: {resp_time:.2f}s vs {baseline_time:.2f}s"
                 })
@@ -376,6 +382,8 @@ class SSRFDetection(TechniqueScanner):
                         "type": "file_read",
                         "wrapper": wrapper,
                         "endpoint": url,
+                        "method": method,
+                        "response_obj": resp,
                         "evidence": f"Local file read via {wrapper}"
                     })
 
@@ -386,6 +394,8 @@ class SSRFDetection(TechniqueScanner):
                         "type": "redis_access",
                         "wrapper": wrapper,
                         "endpoint": url,
+                        "method": method,
+                        "response_obj": resp,
                         "evidence": f"Redis access via {wrapper_type}"
                     })
 
@@ -421,6 +431,8 @@ class SSRFDetection(TechniqueScanner):
                         "bypass_type": bypass_type,
                         "payload": bypass,
                         "endpoint": url,
+                        "method": method,
+                        "response_obj": resp,
                         "evidence": f"SSRF bypass using {bypass_type}: {bypass}"
                     })
 
@@ -463,6 +475,8 @@ class SSRFDetection(TechniqueScanner):
                 "type": "port_scan",
                 "open_ports": open_ports,
                 "endpoint": url,
+                "method": method,
+                "response_obj": resp,
                 "evidence": f"Internal port scan possible: {[f'{p}({s})' for p, s, _ in open_ports]}"
             })
 
@@ -490,7 +504,11 @@ class SSRFDetection(TechniqueScanner):
                     reproduction_steps=[
                         f"URL: {ep['url']}",
                         f"Parameter: {ep['param']}"
-                    ]
+                    ],
+                    sub_technique="ssrf_discovery",
+                    endpoint=ep["url"],
+                    parameter=ep["param"],
+                    http_method=ep["method"]
                 )
                 findings.append(finding)
                 progress.add_finding(domain, finding)
@@ -510,7 +528,12 @@ class SSRFDetection(TechniqueScanner):
                             reproduction_steps=[
                                 f"Endpoint: {mf['endpoint']}",
                                 f"Target: {mf['target']}"
-                            ]
+                            ],
+                            response_obj=mf.get("response_obj"),
+                            sub_technique="ssrf_cloud_metadata",
+                            endpoint=mf["endpoint"],
+                            parameter=ep["param"],
+                            http_method=mf.get("method")
                         )
                         findings.append(finding)
                         progress.add_finding(domain, finding)
@@ -531,7 +554,12 @@ class SSRFDetection(TechniqueScanner):
                             reproduction_steps=[
                                 f"Endpoint: {inf['endpoint']}",
                                 f"Target: {inf['target']}"
-                            ]
+                            ],
+                            response_obj=inf.get("response_obj"),
+                            sub_technique="ssrf_internal_access",
+                            endpoint=inf["endpoint"],
+                            parameter=ep["param"],
+                            http_method=inf.get("method")
                         )
                         findings.append(finding)
                         progress.add_finding(domain, finding)
@@ -551,7 +579,11 @@ class SSRFDetection(TechniqueScanner):
                             reproduction_steps=[
                                 f"Endpoint: {pf['endpoint']}",
                                 f"Wrapper: {pf['wrapper']}"
-                            ]
+                            ],
+                            response_obj=pf.get("response_obj"),
+                            sub_technique="ssrf_protocol_wrapper",
+                            endpoint=pf["endpoint"],
+                            http_method=pf.get("method")
                         )
                         findings.append(finding)
                         progress.add_finding(domain, finding)
@@ -571,7 +603,12 @@ class SSRFDetection(TechniqueScanner):
                             reproduction_steps=[
                                 f"Endpoint: {bf['endpoint']}",
                                 f"Payload: {bf['payload']}"
-                            ]
+                            ],
+                            response_obj=bf.get("response_obj"),
+                            sub_technique="ssrf_bypass",
+                            endpoint=bf["endpoint"],
+                            payload=bf["payload"],
+                            http_method=bf.get("method")
                         )
                         findings.append(finding)
                         progress.add_finding(domain, finding)
@@ -591,7 +628,11 @@ class SSRFDetection(TechniqueScanner):
                             reproduction_steps=[
                                 f"Endpoint: {portf['endpoint']}",
                                 f"Open ports detected: {portf['open_ports']}"
-                            ]
+                            ],
+                            response_obj=portf.get("response_obj"),
+                            sub_technique="ssrf_port_scan",
+                            endpoint=portf["endpoint"],
+                            http_method=portf.get("method")
                         )
                         findings.append(finding)
                         progress.add_finding(domain, finding)

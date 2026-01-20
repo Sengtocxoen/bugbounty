@@ -373,6 +373,7 @@ class TechniqueScanner(ABC):
         self.verbose = verbose
         self.session = self._create_session()
         self._shutdown = False
+        self._last_response: Optional[requests.Response] = None
 
     def _create_session(self) -> requests.Session:
         """Create a session with retry logic"""
@@ -403,7 +404,9 @@ class TechniqueScanner(ABC):
             kwargs.setdefault('timeout', self.timeout)
             kwargs.setdefault('verify', True)
             kwargs.setdefault('allow_redirects', False)
-            return self.session.request(method, url, **kwargs)
+            response = self.session.request(method, url, **kwargs)
+            self._last_response = response
+            return response
         except requests.exceptions.RequestException as e:
             if self.verbose:
                 print(f"  [!] Request error for {url}: {type(e).__name__}")
@@ -449,8 +452,22 @@ class TechniqueScanner(ABC):
                        reproduction_steps: List[str],
                        request: str = None,
                        response: str = None,
+                       response_obj: Optional[requests.Response] = None,
                        **metadata) -> Finding:
         """Helper to create a finding"""
+        if response_obj is None and self._last_response is not None:
+            response_obj = self._last_response
+            metadata.setdefault("http_capture", "last_response")
+
+        if response_obj is not None and (request is None or response is None):
+            req_str, resp_str, http_meta = self._format_http_exchange(response_obj)
+            if request is None:
+                request = req_str
+            if response is None:
+                response = resp_str
+            for key, value in http_meta.items():
+                metadata.setdefault(key, value)
+
         return Finding(
             domain=domain,
             technique=self.TECHNIQUE_NAME,
@@ -464,6 +481,79 @@ class TechniqueScanner(ABC):
             response=response,
             metadata=metadata
         )
+
+    def _format_http_exchange(self, response: requests.Response, max_body: int = 2000) -> tuple:
+        """Format request/response with headers and truncated body for reporting."""
+        prepared = response.request
+        req_line = self._format_request_line(prepared)
+        req_headers = self._format_headers(prepared.headers)
+        req_body = self._safe_body(prepared.body, max_body)
+        request_text = "\n".join([req_line, req_headers, "", req_body]).strip()
+
+        resp_line = f"HTTP {response.status_code}"
+        resp_headers = self._format_headers(response.headers)
+        resp_body = self._safe_body(response.content, max_body, content_type=response.headers.get("Content-Type", ""))
+        response_text = "\n".join([resp_line, resp_headers, "", resp_body]).strip()
+
+        http_meta = self._build_http_metadata(response, req_body, resp_body)
+        return request_text, response_text, http_meta
+
+    def _format_request_line(self, prepared: requests.PreparedRequest) -> str:
+        """Create a request line like: GET /path?query HTTP/1.1"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(prepared.url)
+            path = parsed.path or "/"
+            if parsed.query:
+                path = f"{path}?{parsed.query}"
+            return f"{prepared.method} {path} HTTP/1.1"
+        except Exception:
+            return f"{prepared.method} {prepared.url} HTTP/1.1"
+
+    def _format_headers(self, headers: Dict[str, Any]) -> str:
+        return "\n".join([f"{k}: {v}" for k, v in headers.items()])
+
+    def _safe_body(self, body: Any, max_body: int, content_type: str = "") -> str:
+        """Render body as text with truncation; omit binary content."""
+        if body is None:
+            return ""
+        if isinstance(body, str):
+            text = body
+        elif isinstance(body, bytes):
+            is_text = "text" in content_type.lower() or "json" in content_type.lower() or "xml" in content_type.lower() or "html" in content_type.lower()
+            if not is_text:
+                return f"<binary body omitted: {len(body)} bytes>"
+            text = body.decode("utf-8", errors="replace")
+        else:
+            text = str(body)
+
+        if len(text) > max_body:
+            return text[:max_body] + "\n<response truncated>"
+        return text
+
+    def _build_http_metadata(self, response: requests.Response, req_body: str, resp_body: str) -> Dict[str, Any]:
+        elapsed_ms = None
+        try:
+            elapsed_ms = int(response.elapsed.total_seconds() * 1000)
+        except Exception:
+            pass
+
+        try:
+            request_headers = dict(response.request.headers)
+        except Exception:
+            request_headers = {}
+
+        return {
+            "http_url": response.url,
+            "http_method": response.request.method if response.request else None,
+            "http_status": response.status_code,
+            "http_elapsed_ms": elapsed_ms,
+            "http_request_headers": request_headers,
+            "http_response_headers": dict(response.headers),
+            "http_request_body_length": len(req_body) if req_body else 0,
+            "http_response_body_length": len(response.content) if response.content else 0,
+            "http_response_content_type": response.headers.get("Content-Type", ""),
+        }
 
 
 # Global shutdown flag for graceful termination

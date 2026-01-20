@@ -115,7 +115,9 @@ class CrossSiteAttacks(TechniqueScanner):
                         "url": base_url,
                         "parameter": param,
                         "reflected": True,
-                        "context": self._detect_context(resp.text, canary)
+                        "context": self._detect_context(resp.text, canary),
+                        "method": "GET",
+                        "response_obj": resp
                     })
 
         return reflection_points
@@ -175,6 +177,8 @@ class CrossSiteAttacks(TechniqueScanner):
                         "payload_type": payload_type,
                         "parameter": param,
                         "url": test_url,
+                        "method": "GET",
+                        "response_obj": resp,
                         "evidence": f"HTML tags reflected unencoded: <{canary}>"
                     })
 
@@ -184,6 +188,8 @@ class CrossSiteAttacks(TechniqueScanner):
                         "payload_type": payload_type,
                         "parameter": param,
                         "url": test_url,
+                        "method": "GET",
+                        "response_obj": resp,
                         "evidence": "Event handler attribute reflected"
                     })
 
@@ -193,6 +199,8 @@ class CrossSiteAttacks(TechniqueScanner):
                         "payload_type": payload_type,
                         "parameter": param,
                         "url": test_url,
+                        "method": "GET",
+                        "response_obj": resp,
                         "evidence": "Template syntax reflected - potential SSTI"
                     })
 
@@ -202,6 +210,8 @@ class CrossSiteAttacks(TechniqueScanner):
                         "payload_type": payload_type,
                         "parameter": param,
                         "url": test_url,
+                        "method": "GET",
+                        "response_obj": resp,
                         "evidence": "DOM clobbering element name reflected"
                     })
 
@@ -254,6 +264,7 @@ class CrossSiteAttacks(TechniqueScanner):
                             "form_action": action,
                             "method": "POST",
                             "csrf_protected": False,
+                            "response_obj": resp,
                             "evidence": f"POST form without CSRF token at {page_url}"
                         })
 
@@ -270,7 +281,8 @@ class CrossSiteAttacks(TechniqueScanner):
         result = {
             "x_frame_options": None,
             "csp_frame_ancestors": None,
-            "vulnerable": True
+            "vulnerable": True,
+            "response_obj": resp
         }
 
         # Check X-Frame-Options
@@ -333,6 +345,7 @@ class CrossSiteAttacks(TechniqueScanner):
                             "acao": acao,
                             "credentials": acac,
                             "severity": "high",
+                            "response_obj": resp,
                             "evidence": f"CORS reflects arbitrary origin with credentials: {origin}"
                         })
 
@@ -344,6 +357,7 @@ class CrossSiteAttacks(TechniqueScanner):
                             "acao": acao,
                             "credentials": acac,
                             "severity": "medium",
+                            "response_obj": resp,
                             "evidence": "CORS wildcard with credentials (browser will block, but misconfigured)"
                         })
 
@@ -355,6 +369,7 @@ class CrossSiteAttacks(TechniqueScanner):
                             "acao": acao,
                             "credentials": acac,
                             "severity": "medium",
+                            "response_obj": resp,
                             "evidence": "CORS accepts null origin (sandboxed iframe bypass)"
                         })
 
@@ -392,6 +407,7 @@ class CrossSiteAttacks(TechniqueScanner):
                             findings.append({
                                 "endpoint": url,
                                 "type": "graphql_csrf",
+                                "response_obj": resp_no_origin,
                                 "evidence": f"GraphQL endpoint at {endpoint} accepts requests without origin validation"
                             })
                 except:
@@ -441,6 +457,7 @@ class CrossSiteAttacks(TechniqueScanner):
                                 "parameter": param,
                                 "payload": evil_url,
                                 "redirect_location": location,
+                                "response_obj": resp,
                                 "evidence": f"Open redirect via {param} parameter to {location}"
                             })
                             break  # Found for this param, move on
@@ -469,7 +486,12 @@ class CrossSiteAttacks(TechniqueScanner):
                     reproduction_steps=[
                         f"Access: {rp['url']}?{rp['parameter']}=TEST",
                         f"Value reflected in: {rp['context']}"
-                    ]
+                    ],
+                    response_obj=rp.get("response_obj"),
+                    sub_technique="reflection",
+                    parameter=rp["parameter"],
+                    http_method=rp.get("method"),
+                    endpoint=rp.get("url")
                 )
                 findings.append(finding)
                 progress.add_finding(domain, finding)
@@ -487,7 +509,13 @@ class CrossSiteAttacks(TechniqueScanner):
                         reproduction_steps=[
                             f"URL: {xf['url']}",
                             f"Payload type: {xf['payload_type']}"
-                        ]
+                        ],
+                        response_obj=xf.get("response_obj"),
+                        sub_technique="xss",
+                        parameter=xf["parameter"],
+                        payload_type=xf.get("payload_type"),
+                        http_method=xf.get("method"),
+                        endpoint=xf.get("url")
                     )
                     findings.append(finding)
                     progress.add_finding(domain, finding)
@@ -508,7 +536,11 @@ class CrossSiteAttacks(TechniqueScanner):
                         f"Page: {cf['page']}",
                         f"Form action: {cf['form_action']}",
                         "Form submits via POST without CSRF token"
-                    ]
+                    ],
+                    response_obj=cf.get("response_obj"),
+                    sub_technique="csrf",
+                    endpoint=cf.get("page"),
+                    http_method=cf.get("method")
                 )
                 findings.append(finding)
                 progress.add_finding(domain, finding)
@@ -528,7 +560,11 @@ class CrossSiteAttacks(TechniqueScanner):
                     reproduction_steps=[
                         "Create HTML page with iframe pointing to target",
                         "Page can be embedded in attacker-controlled frame"
-                    ]
+                    ],
+                    response_obj=clickjack.get("response_obj"),
+                    sub_technique="clickjacking",
+                    endpoint=f"https://{domain}/",
+                    http_method="GET"
                 )
                 findings.append(finding)
                 progress.add_finding(domain, finding)
@@ -549,7 +585,11 @@ class CrossSiteAttacks(TechniqueScanner):
                         f"Endpoint: {cf['endpoint']}",
                         f"Send request with Origin: {cf['origin_tested']}",
                         f"Response ACAO: {cf['acao']}, ACAC: {cf['credentials']}"
-                    ]
+                    ],
+                    response_obj=cf.get("response_obj"),
+                    sub_technique="cors",
+                    endpoint=cf.get("endpoint"),
+                    http_method="GET"
                 )
                 findings.append(finding)
                 progress.add_finding(domain, finding)
@@ -570,7 +610,11 @@ class CrossSiteAttacks(TechniqueScanner):
                         f"Endpoint: {wf['endpoint']}",
                         "Test cross-origin requests to this endpoint",
                         "May be exploitable via WebSocket upgrade (CSWSH)"
-                    ]
+                    ],
+                    response_obj=wf.get("response_obj"),
+                    sub_technique="graphql_csrf",
+                    endpoint=wf.get("endpoint"),
+                    http_method="POST"
                 )
                 findings.append(finding)
                 progress.add_finding(domain, finding)
@@ -590,7 +634,12 @@ class CrossSiteAttacks(TechniqueScanner):
                     reproduction_steps=[
                         f"URL: {rf['url']}",
                         f"Redirects to: {rf['redirect_location']}"
-                    ]
+                    ],
+                    response_obj=rf.get("response_obj"),
+                    sub_technique="open_redirect",
+                    parameter=rf.get("parameter"),
+                    endpoint=rf.get("url"),
+                    http_method="GET"
                 )
                 findings.append(finding)
                 progress.add_finding(domain, finding)

@@ -28,7 +28,7 @@ from .base import TechniqueScanner, Finding, ScanProgress, is_shutdown
 class SSTIInjection(TechniqueScanner):
     """Server-Side Template Injection and Code Injection scanner"""
 
-    TECHNIQUE_NAME = "ssti_injection"
+    TECHNIQUE_NAME = "injection"
     TECHNIQUE_CATEGORY = "injection"
 
     # SSTI detection payloads for various template engines
@@ -276,6 +276,14 @@ class SSTIInjection(TechniqueScanner):
         param = injectable["parameter"]
         method = injectable["method"]
 
+        # Baseline response to avoid false positives on static content
+        baseline_canary = self._generate_canary()
+        if method == "GET":
+            baseline_resp = self.get(f"{url}?{param}={baseline_canary}", allow_redirects=True)
+        else:
+            baseline_resp = self.post(url, data={param: baseline_canary}, allow_redirects=True)
+        baseline_text = baseline_resp.text if baseline_resp and baseline_resp.text else ""
+
         for ssti in self.SSTI_PAYLOADS:
             if is_shutdown():
                 break
@@ -291,15 +299,20 @@ class SSTIInjection(TechniqueScanner):
             if resp is None:
                 continue
 
-            # Check for expected output
-            if ssti["expect"] != "error" and ssti["expect"] in resp.text:
+            # Check for expected output (and ensure it's not already in baseline)
+            if ssti["expect"] != "error" and ssti["expect"] in resp.text and ssti["expect"] not in baseline_text:
+                reflection_possible = payload in resp.text
                 findings.append({
                     "type": "ssti_confirmed",
                     "name": ssti["name"],
                     "engines": ssti["engines"],
                     "parameter": param,
                     "payload": payload,
-                    "evidence": f"SSTI confirmed: {payload} -> {ssti['expect']}"
+                    "method": method,
+                    "url": url,
+                    "response_obj": resp,
+                    "reflection_possible": reflection_possible,
+                    "evidence": f"SSTI output observed: {payload} -> {ssti['expect']}"
                 })
                 break  # Found it, no need to test more
 
@@ -328,6 +341,9 @@ class SSTIInjection(TechniqueScanner):
                         "name": blind["name"],
                         "parameter": param,
                         "payload": payload,
+                        "method": method,
+                        "url": url,
+                        "response_obj": resp,
                         "evidence": f"Error-based SSTI indicator: {indicator}"
                     })
                     break
@@ -379,6 +395,9 @@ class SSTIInjection(TechniqueScanner):
                             "name": sql["name"],
                             "parameter": param,
                             "payload": payload,
+                            "method": method,
+                            "url": url,
+                            "response_obj": resp,
                             "evidence": f"SQL error indicator: {error}"
                         })
                         break
@@ -391,6 +410,9 @@ class SSTIInjection(TechniqueScanner):
                         "name": sql["name"],
                         "parameter": param,
                         "payload": payload,
+                        "method": method,
+                        "url": url,
+                        "response_obj": resp,
                         "evidence": f"Time-based SQLi: {resp.elapsed.total_seconds():.1f}s delay"
                     })
 
@@ -408,7 +430,7 @@ class SSTIInjection(TechniqueScanner):
         param = injectable["parameter"]
         method = injectable["method"]
 
-        # Get baseline time
+        # Get baseline time/response
         baseline_canary = self._generate_canary()
         if method == "GET":
             start = time.time()
@@ -421,6 +443,7 @@ class SSTIInjection(TechniqueScanner):
 
         if baseline_resp is None:
             return findings
+        baseline_text = baseline_resp.text if baseline_resp.text else ""
 
         for cmd in self.CMD_PAYLOADS:
             if is_shutdown():
@@ -441,14 +464,17 @@ class SSTIInjection(TechniqueScanner):
             if resp is None:
                 continue
 
-            # Echo-based detection
-            if "expect" in cmd and cmd["expect"] in resp.text:
+            # Echo-based detection (avoid baseline reflection)
+            if "expect" in cmd and cmd["expect"] in resp.text and cmd["expect"] not in baseline_text:
                 findings.append({
                     "type": "cmdi_confirmed",
                     "name": cmd["name"],
                     "parameter": param,
                     "payload": payload,
-                    "evidence": f"Command injection confirmed: {cmd['expect']} in response"
+                    "method": method,
+                    "url": url,
+                    "response_obj": resp,
+                    "evidence": f"Command output observed: {cmd['expect']} in response"
                 })
 
             # Time-based detection
@@ -459,6 +485,9 @@ class SSTIInjection(TechniqueScanner):
                         "name": cmd["name"],
                         "parameter": param,
                         "payload": payload,
+                        "method": method,
+                        "url": url,
+                        "response_obj": resp,
                         "evidence": f"Time-based command injection: {resp_time:.1f}s delay"
                     })
 
@@ -607,18 +636,35 @@ class SSTIInjection(TechniqueScanner):
                 ssti_findings = self._test_ssti(domain, injectable)
 
                 for sf in ssti_findings:
-                    severity = "critical" if sf["type"] == "ssti_confirmed" else "high"
+                    evidence_type = "error_based" if sf["type"] == "ssti_error_based" else "output_match"
+                    reflection_possible = sf.get("reflection_possible", False)
+                    if sf["type"] == "ssti_confirmed":
+                        severity = "high" if reflection_possible else "high"
+                        confidence = "low" if reflection_possible else "medium"
+                    else:
+                        severity = "medium"
+                        confidence = "low"
+                    title_suffix = "SSTI (Possible Reflection)" if reflection_possible else "SSTI"
+
                     finding = self.create_finding(
                         domain=domain,
                         severity=severity,
-                        title=f"SSTI: {sf['name']}",
+                        title=f"{title_suffix}: {sf['name']}",
                         description=f"Server-Side Template Injection via {sf['parameter']}",
                         evidence=sf["evidence"],
                         reproduction_steps=[
                             f"URL: {injectable['url']}",
                             f"Parameter: {sf['parameter']}",
                             f"Payload: {sf['payload']}"
-                        ]
+                        ],
+                        response_obj=sf.get("response_obj"),
+                        sub_technique="ssti",
+                        confidence=confidence,
+                        evidence_type=evidence_type,
+                        parameter=sf["parameter"],
+                        payload=sf["payload"],
+                        http_method=sf.get("method"),
+                        endpoint=sf.get("url")
                     )
                     findings.append(finding)
                     progress.add_finding(domain, finding)
@@ -629,7 +675,8 @@ class SSTIInjection(TechniqueScanner):
                     sqli_findings = self._test_sql_injection(domain, injectable)
 
                     for sqf in sqli_findings:
-                        severity = "critical" if "confirmed" in sqf["type"] else "high"
+                        severity = "high" if "error" in sqf["type"] else "medium"
+                        confidence = "medium" if "error" in sqf["type"] else "low"
                         finding = self.create_finding(
                             domain=domain,
                             severity=severity,
@@ -640,7 +687,13 @@ class SSTIInjection(TechniqueScanner):
                                 f"URL: {injectable['url']}",
                                 f"Parameter: {sqf['parameter']}",
                                 f"Payload: {sqf['payload']}"
-                            ]
+                            ],
+                            sub_technique="sqli",
+                            confidence=confidence,
+                            parameter=sqf["parameter"],
+                            payload=sqf["payload"],
+                            http_method=injectable.get("method"),
+                            endpoint=injectable.get("url")
                         )
                         findings.append(finding)
                         progress.add_finding(domain, finding)
@@ -651,18 +704,33 @@ class SSTIInjection(TechniqueScanner):
                     cmdi_findings = self._test_command_injection(domain, injectable)
 
                     for cf in cmdi_findings:
-                        severity = "critical"
+                        if cf["type"] == "cmdi_confirmed":
+                            severity = "high"
+                            confidence = "medium"
+                            evidence_type = "output_match"
+                        else:
+                            severity = "medium"
+                            confidence = "low"
+                            evidence_type = "time_delay"
                         finding = self.create_finding(
                             domain=domain,
                             severity=severity,
-                            title=f"Command Injection: {cf['name']}",
+                            title=f"OS Command Injection: {cf['name']}",
                             description=f"OS Command Injection via {cf['parameter']}",
                             evidence=cf["evidence"],
                             reproduction_steps=[
                                 f"URL: {injectable['url']}",
                                 f"Parameter: {cf['parameter']}",
                                 f"Payload: {cf['payload']}"
-                            ]
+                            ],
+                            response_obj=cf.get("response_obj"),
+                            sub_technique="command_injection",
+                            confidence=confidence,
+                            evidence_type=evidence_type,
+                            parameter=cf["parameter"],
+                            payload=cf["payload"],
+                            http_method=cf.get("method"),
+                            endpoint=cf.get("url")
                         )
                         findings.append(finding)
                         progress.add_finding(domain, finding)
