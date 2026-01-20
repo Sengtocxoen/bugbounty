@@ -1,132 +1,235 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Instructions for Claude Code (claude.ai/code) when working with this bug bounty workspace.
 
-## Repository Overview
+---
 
-This is a bug bounty hunting workspace for program-specific security testing. Each subdirectory represents a separate bug bounty program with its own scope, rules, and testing guidelines.
+## Quick Reference
 
-## Directory Structure
+| Item | Value |
+|------|-------|
+| **Purpose** | Bug bounty research workspace |
+| **Programs** | Amazon VRP, Shopify BBP |
+| **Tools Location** | `tools/` directory |
+| **Scan Command** | `python -m web_hacking_2025.run` |
 
-The repository is organized by bug bounty program:
-- `Amazon/` - Amazon Vulnerability Research Program (VRP) resources
-- `Shopify/` - Shopify Bug Bounty Program resources
+---
 
-Each program directory contains:
-- `Overview.md` - Complete program policy including scope, rules, severity guidelines, and eligible vulnerabilities
+## Project Structure
 
-## Program-Specific Guidelines
+```
+bugbounty/
+├── Amazon/Overview.md          # Amazon VRP program policy
+├── Shopify/Overview.md         # Shopify BBP program policy
+├── Testing_Strategy.md         # Strategic testing approaches
+├── Reconnaissance_Guide.md     # Recon commands & techniques
+├── Quick_Reference_Checklist.md # Daily checklists
+├── tools/                      # Python security tools
+│   ├── scanner.py              # Main scanner
+│   ├── subdomain_discovery.py  # Subdomain enumeration
+│   ├── endpoint_discovery.py   # API endpoint discovery
+│   ├── js_analyzer.py          # JS analysis
+│   ├── param_fuzzer.py         # Parameter fuzzing
+│   ├── scope_validator.py      # Scope checking
+│   ├── deep_scan.py            # Deep vulnerability scan
+│   ├── false_positive_detector.py
+│   ├── web_hacking_2025/       # Advanced scanner (11 techniques)
+│   │   ├── run.py              # CLI entry point
+│   │   ├── scanner.py          # Main module
+│   │   └── [attack modules]    # Individual technique modules
+│   └── requirements.txt
+└── KingOfBugBountyTips/        # External tips (empty)
+```
+
+---
+
+## Bug Bounty Program Rules
 
 ### Amazon VRP
 
-**Scope:**
-- All retail marketplaces (wildcard `*.amazon`)
-- Amazon retail iOS/Android apps (MShop)
-- Subdomain takeovers on wildcard domains are IN-SCOPE
+**Scope:** `*.amazon` (all retail marketplaces) + mobile apps
 
-**Always Out of Scope:**
-- Anything containing `aws` in subdomain
-- Anything ending with `.a2z` or `*.dev`
-- URLs with test/qa/integ/preprod/gamma/beta indicators
-- AWS and AWS customer assets
+**CRITICAL Requirements:**
+```
+User-Agent: amazonvrpresearcher_<h1username>
+Rate Limit: 5 requests/second MAX
+Email:      <h1username>@wearehackerone.com
+```
 
-**Testing Requirements (Amazon/Overview.md:121-133):**
-- Use User-Agent string: `amazonvrpresearcher_yourh1username`
-- Automated scanners limited to 5 requests/second with above User-Agent
-- Create accounts using `yourh1username@wearehackerone.com`
-- Do NOT use 3rd party sites for testing (e.g., XSS Hunter) - must use self-hosted infrastructure
-- For subdomain takeovers: serve HTML file on hidden path with H1 username in HTML comment
+**Out of Scope:**
+- AWS subdomains (`aws` in domain)
+- `.a2z` and `.dev` domains
+- Test/QA/staging/preprod/gamma/beta environments
 
-**Severity Priorities (Amazon/Overview.md:182-202):**
-- Critical: RCE, SQLi, XXE, XSS (high impact)
-- High-Critical: SSRF
-- Medium-High: Directory Traversal, Auth/Authz Bypass, IDOR, Privilege Escalation
-- Low-Medium: CORS, CRLF, CSRF, Open Redirect, Request Smuggling
+**High-Value Vulnerabilities:**
+- Critical: RCE, SQLi, XXE, High-impact XSS
+- High: SSRF, Auth Bypass, Privilege Escalation
+- Medium: Directory Traversal, IDOR, CORS
 
-**GenAI/LLM Testing (Amazon/Overview.md:206-241):**
-- Include: Timestamp, IP, Prompt String, Security Impact
-- Prompt response content issues without security impact are OUT OF SCOPE
-- DO NOT submit generated sensitive/explicit images
-- Model hallucinations are out of scope
-
-**Non-Eligible (Amazon/Overview.md:244-277):**
-- Subdomain takeover on out-of-scope items
+**Not Eligible:**
 - Clickjacking, Self-XSS, Email Spoofing
-- Missing security headers, cookie flags
-- Minimal-impact CSRF (login/logout)
-- Scanner outputs, DOS/DDOS, password complexity
+- Missing headers/cookie flags
+- Login/logout CSRF, DOS/DDOS
+- Scanner-only outputs
 
-### Shopify Bug Bounty
+### Shopify BBP
 
-**Key Requirements (Shopify/Overview.md:24-32):**
-- Must use `@wearehackerone.com` email alias for account creation
-- Register via: https://partners.shopify.com/signup/bugbounty
-- Test ONLY against stores you created
-- Testing against live merchants is PROHIBITED
+**Registration:** https://partners.shopify.com/signup/bugbounty
 
-**Eligibility Rules (Shopify/Overview.md:34-40):**
-- Reports must demonstrate functional proof of concept with security impact
-- Rewards based on highest severity scenario that's plausible and linked to root issue
-- Only reward when root cause is under Shopify's control
-- IDOR evaluated based on identifier predictability and data sensitivity
+**CRITICAL Requirements:**
+```
+Email:      <h1username>@wearehackerone.com
+Testing:    ONLY stores you created
+```
 
-**Bounty Calculation (Shopify/Overview.md:41-44):**
-- Uses Shopify's Bug Bounty Calculator
-- Minimum score > 0 for triage
-- Score < 3 = $500 bounty
-- Score >= 3 = calculated amount
-- Bonuses for 0-score issues with high future impact (10% of estimated, $500-$5,000 range)
+**Forbidden Actions:**
+- Testing live merchant stores = DISQUALIFICATION
+- Contacting Shopify Support = POTENTIAL BAN
+- Public disclosure before resolution
 
-**Critical Rule (Shopify/Overview.md:60):**
-- Do NOT contact Shopify Support about testing, program questions, or report updates - will result in disqualification and potential ban
+**Bounty Calculation:**
+- Score < 3 = $500
+- Score >= 3 = Calculated amount
+- Must demonstrate functional PoC with security impact
 
-**Testing Restrictions (Shopify/Overview.md:52-54):**
-- Only test stores created with your HackerOne registered email
-- Do not access or interact with stores you didn't create
-- No public disclosure before resolution
+---
 
-## Workflow Recommendations
+## Tools Usage
 
-### Starting a New Program
+### Main Scanner (Web Hacking 2025)
 
-1. Create a new directory named after the program
-2. Add `Overview.md` with complete program policy from the platform
-3. Document scope, out-of-scope items, testing rules, and severity guidelines
+```bash
+cd tools
 
-### Pre-Testing Checklist
+# List techniques
+python -m web_hacking_2025.run --list-techniques
 
-1. Review `Overview.md` for the target program
-2. Verify asset is explicitly in scope
-3. Set up proper User-Agent strings if required
-4. Create test accounts using program-approved email format
-5. Configure scanning tools with rate limits per program requirements
+# Scan with program compliance
+python -m web_hacking_2025.run target.amazon.com \
+  --program amazon \
+  --h1-user YOUR_USERNAME
 
-### Report Preparation
+# Specific techniques
+python -m web_hacking_2025.run target.com \
+  --techniques smuggling,cache,ssrf,xss
 
-When documenting findings, include:
-- Target URL/asset and proof it's in scope
-- Clear reproduction steps
-- Functional proof of concept
-- Security impact assessment
-- Screenshots/video evidence
-- Severity classification per program guidelines
+# Resume interrupted scan
+python -m web_hacking_2025.run -f domains.txt --resume
+```
 
-## Important Security Testing Principles
+**11 Available Techniques:**
+1. `smuggling` - HTTP Request Smuggling
+2. `cache` - Cache Poisoning
+3. `auth` - Authentication Bypass
+4. `xss` - XSS/CSRF/CORS
+5. `parser` - XXE/Parser attacks
+6. `inject` - SSTI/SQL/Command injection
+7. `ssrf` - Server-Side Request Forgery
+8. `xsleaks` - XS-Leaks
+9. `framework` - Framework vulnerabilities
+10. `deser` - Deserialization
+11. `protocol` - Protocol attacks
 
-**Do:**
-- Only test assets explicitly listed in scope
-- Use authorized testing accounts
-- Follow rate limiting requirements
-- Report vulnerabilities immediately upon validation
-- Use self-hosted infrastructure for blind testing
+### Other Tools
 
-**Don't:**
-- Test out-of-scope assets or customer data
-- Perform post-exploitation or excessive testing
-- Access other users' accounts or data
-- Use 3rd party services that expose vulnerability data
-- Contact support channels as part of testing
+```bash
+# Subdomain enumeration
+python subdomain_discovery.py amazon.com
 
-## Notes
+# Run general scan
+python run_scan.py https://target.com
 
-This workspace does not contain automated scanning tools or custom scripts. It serves as a centralized location for program-specific policies and testing guidelines. For automated testing, refer to the main bug bounty automation suite in the parent `bugbounty/` directory if available.
+# Validate scope
+python scope_validator.py "https://target.amazon.com"
+```
+
+---
+
+## When Assisting with This Project
+
+### DO:
+- Check scope before suggesting any target
+- Include User-Agent requirements in scan commands
+- Respect rate limits (5 req/s for Amazon)
+- Use `@wearehackerone.com` email format
+- Reference Overview.md for program-specific rules
+- Validate findings reduce false positives
+
+### DON'T:
+- Suggest testing AWS, .a2z, or .dev domains
+- Recommend third-party XSS Hunter services
+- Ignore program-specific testing restrictions
+- Suggest testing Shopify stores not owned by user
+- Recommend contacting support channels
+
+### When Writing Code:
+- Add User-Agent headers for Amazon scans
+- Implement rate limiting (use `time.sleep()`)
+- Include scope validation checks
+- Handle false positives properly
+- Follow existing code patterns in `tools/`
+
+### When Reviewing Findings:
+- Check if target is explicitly in-scope
+- Verify vulnerability has security impact
+- Ensure PoC is functional, not theoretical
+- Match severity to program guidelines
+- Flag any out-of-scope issues
+
+---
+
+## Common Tasks
+
+### Add New Bug Bounty Program
+
+1. Create directory: `<ProgramName>/`
+2. Add `Overview.md` with full policy from HackerOne/Bugcrowd
+3. Document: scope, out-of-scope, testing rules, severity levels
+4. Update this file with program summary
+
+### Prepare a Report
+
+1. Verify target in-scope
+2. Create working PoC
+3. Write clear reproduction steps
+4. Calculate severity per program guidelines
+5. Include screenshots/video evidence
+
+### Validate Scope
+
+```bash
+# Use scope validator
+python tools/scope_validator.py "https://target.com"
+
+# Or check manually:
+# Amazon: No 'aws', '.a2z', '.dev', 'test', 'staging' in URL
+# Shopify: Must be your own test store
+```
+
+---
+
+## File References
+
+| Topic | File | Key Lines |
+|-------|------|-----------|
+| Amazon scope | `Amazon/Overview.md` | Lines 1-50 |
+| Amazon testing rules | `Amazon/Overview.md` | Lines 121-133 |
+| Amazon severity | `Amazon/Overview.md` | Lines 182-202 |
+| Amazon GenAI rules | `Amazon/Overview.md` | Lines 206-241 |
+| Shopify requirements | `Shopify/Overview.md` | Lines 24-32 |
+| Shopify bounty calc | `Shopify/Overview.md` | Lines 41-44 |
+| Testing strategy | `Testing_Strategy.md` | Full document |
+| Recon commands | `Reconnaissance_Guide.md` | Full document |
+| Daily checklist | `Quick_Reference_Checklist.md` | Full document |
+| Scanner docs | `tools/web_hacking_2025/README.md` | Full document |
+
+---
+
+## Important Reminders
+
+1. **Always verify scope** before testing any target
+2. **Rate limits are mandatory** - violations may result in ban
+3. **Self-host testing infrastructure** - no third-party services for Amazon
+4. **Test only owned stores** for Shopify
+5. **Document everything** - screenshots, videos, timestamps
+6. **Report responsibly** - follow program disclosure rules
