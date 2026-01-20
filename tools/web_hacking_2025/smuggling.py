@@ -206,56 +206,44 @@ class HTTPSmuggling(TechniqueScanner):
             path = "/"
             raw_request = payload.raw_request.format(host=host, path=path)
 
-            # First request - baseline
+            # Repeated attempts for reproducibility
             baseline_req = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-            baseline_resp, baseline_time = self._raw_request(host, p, baseline_req.encode(), ssl_enabled)
+            baseline_times = []
+            matches = []
+            for _ in range(3):
+                baseline_resp, baseline_time = self._raw_request(host, p, baseline_req.encode(), ssl_enabled)
+                if baseline_resp is None:
+                    continue
+                baseline_times.append(baseline_time)
 
-            if baseline_resp is None:
-                continue
+                smuggle_resp, smuggle_time = self._raw_request(host, p, raw_request.encode(), ssl_enabled)
+                if smuggle_resp is None:
+                    continue
 
-            # Send smuggling payload
-            smuggle_resp, smuggle_time = self._raw_request(host, p, raw_request.encode(), ssl_enabled)
+                if payload.detection_method == "timeout":
+                    if smuggle_time > baseline_time * 3 and smuggle_time > 5:
+                        matches.append({
+                            "evidence": f"Response time anomaly: baseline={baseline_time:.2f}s, smuggle={smuggle_time:.2f}s",
+                            "response_time": smuggle_time,
+                            "response": smuggle_resp
+                        })
 
-            if smuggle_resp is None:
-                continue
+                elif payload.detection_method == "reflection":
+                    if b"GPOST" in smuggle_resp or b"Invalid request" in smuggle_resp:
+                        matches.append({
+                            "evidence": "Smuggled request content reflected or caused error",
+                            "response_snippet": smuggle_resp[:500].decode('utf-8', errors='ignore'),
+                            "response": smuggle_resp
+                        })
 
-            # Detection based on method
-            finding_data = None
-
-            if payload.detection_method == "timeout":
-                # Significant delay may indicate desync
-                if smuggle_time > baseline_time * 3 and smuggle_time > 5:
-                    finding_data = {
-                        "evidence": f"Response time anomaly: baseline={baseline_time:.2f}s, smuggle={smuggle_time:.2f}s",
-                        "response_time": smuggle_time
-                    }
-
-            elif payload.detection_method == "status_diff":
-                # Check for different status codes
-                baseline_status = self._extract_status(baseline_resp)
-                smuggle_status = self._extract_status(smuggle_resp)
-
-                if baseline_status and smuggle_status and baseline_status != smuggle_status:
-                    finding_data = {
-                        "evidence": f"Status code difference: normal={baseline_status}, smuggle={smuggle_status}",
-                        "status_diff": (baseline_status, smuggle_status)
-                    }
-
-            elif payload.detection_method == "reflection":
-                # Check if smuggled content appears in response
-                if b"GPOST" in smuggle_resp or b"Invalid request" in smuggle_resp:
-                    finding_data = {
-                        "evidence": "Smuggled request content reflected or caused error",
-                        "response_snippet": smuggle_resp[:500].decode('utf-8', errors='ignore')
-                    }
-
-            if finding_data:
+            if len(matches) >= 2:
+                latest = matches[-1]
                 return {
                     "payload": payload,
                     "scheme": scheme,
-                    "evidence": finding_data,
+                    "evidence": latest,
                     "raw_request": raw_request,
-                    "response": smuggle_resp[:2000].decode('utf-8', errors='ignore') if smuggle_resp else None
+                    "response": latest.get("response", b"")[:2000].decode('utf-8', errors='ignore')
                 }
 
         return None
@@ -372,6 +360,7 @@ class HTTPSmuggling(TechniqueScanner):
             result = self._test_smuggling_payload(domain, payload)
 
             if result:
+                evidence_type = "time_delay" if payload.detection_method == "timeout" else "response_reflection"
                 finding = self.create_finding(
                     domain=domain,
                     severity="high",
@@ -386,53 +375,14 @@ class HTTPSmuggling(TechniqueScanner):
                     request=result["raw_request"],
                     response=result.get("response"),
                     payload_name=payload.name,
-                    expected_behavior=payload.expected_behavior
+                    expected_behavior=payload.expected_behavior,
+                    evidence_type=evidence_type,
+                    confidence="medium"
                 )
                 findings.append(finding)
                 progress.add_finding(domain, finding)
 
-        # Test TE obfuscation
-        if not is_shutdown():
-            self.log("Testing Transfer-Encoding obfuscations")
-            te_findings = self._test_te_obfuscation(domain)
-
-            for tf in te_findings:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="medium",
-                    title=f"TE Header Obfuscation Handling Variance",
-                    description=f"Server handles obfuscated Transfer-Encoding header differently: {tf['obfuscation']}",
-                    evidence=tf["evidence"],
-                    reproduction_steps=[
-                        f"Send request with obfuscated TE header: {tf['obfuscation']}",
-                        f"Compare response status with standard 'Transfer-Encoding: chunked'",
-                        f"Standard returned {tf['baseline_status']}, obfuscated returned {tf['test_status']}"
-                    ],
-                    obfuscation=tf["obfuscation"]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
-        # Test HTTP/2 downgrade potential
-        if not is_shutdown():
-            self.log("Checking HTTP/2 support for downgrade potential")
-            h2_result = self._test_http2_downgrade(domain)
-
-            if h2_result:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="info",
-                    title="HTTP/2 Support Detected - Downgrade Potential",
-                    description="Server supports HTTP/2, which may be vulnerable to H2.CL or H2.TE smuggling if downgrading to HTTP/1.1",
-                    evidence=h2_result["evidence"],
-                    reproduction_steps=[
-                        "Test HTTP/2 to HTTP/1.1 downgrade scenarios",
-                        "Check if content-length or transfer-encoding can be manipulated during downgrade"
-                    ],
-                    http2_indicators=h2_result["indicators"]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
+        # Skip TE obfuscation and HTTP/2 support info to avoid low-confidence findings
 
         self.log(f"Completed: {len(findings)} potential smuggling issues found", "success" if findings else "info")
         return findings

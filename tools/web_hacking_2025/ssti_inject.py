@@ -19,8 +19,8 @@ import re
 import random
 import string
 import time
-from typing import List, Optional, Dict
-from urllib.parse import quote, urlencode
+from typing import List, Optional, Dict, Callable
+from urllib.parse import quote, urlencode, urlparse, urljoin
 
 from .base import TechniqueScanner, Finding, ScanProgress, is_shutdown
 
@@ -136,12 +136,12 @@ class SSTIInjection(TechniqueScanner):
         {
             "name": "Single Quote",
             "payload": "'",
-            "errors": ["sql", "syntax", "mysql", "postgres", "sqlite", "oracle", "mssql", "query"]
+            "errors": ["SQL_ERROR"]
         },
         {
             "name": "Comment",
             "payload": "1'--",
-            "errors": ["sql", "syntax", "unterminated"]
+            "errors": ["SQL_ERROR"]
         },
         {
             "name": "Boolean True",
@@ -164,6 +164,20 @@ class SSTIInjection(TechniqueScanner):
             "payload": "1'; SELECT pg_sleep(5)--",
             "time_based": 5
         },
+    ]
+
+    SQL_ERROR_PATTERNS = [
+        r"you have an error in your sql syntax",
+        r"unclosed quotation mark after the character string",
+        r"quoted string not properly terminated",
+        r"sql syntax.*mysql",
+        r"warning.*mysql",
+        r"pg::syntaxerror",
+        r"postgresql.*syntax error",
+        r"sqlite.*syntax error",
+        r"ora-\d{4,}",
+        r"sqlserver.*driver",
+        r"mssql.*syntax",
     ]
 
     # Command injection payloads
@@ -224,6 +238,39 @@ class SSTIInjection(TechniqueScanner):
         """Generate unique canary for detection"""
         return 'ssti' + ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
 
+    def _same_domain(self, url: str, domain: str) -> bool:
+        try:
+            host = urlparse(url).netloc.lower()
+        except Exception:
+            return False
+        return host == domain.lower() or host.endswith(f".{domain.lower()}")
+
+    def _follow_same_domain(self,
+                            method: str,
+                            url: str,
+                            domain: str,
+                            request_fn: Callable,
+                            **kwargs):
+        """Follow redirects only within the same domain; return None if out-of-scope."""
+        resp = request_fn(url, allow_redirects=False, **kwargs)
+        if resp is None:
+            return None
+        if not self._same_domain(resp.url, domain):
+            return None
+        hops = 0
+        while resp.is_redirect and hops < 2:
+            location = resp.headers.get("Location")
+            if not location:
+                break
+            next_url = urljoin(resp.url, location)
+            if not self._same_domain(next_url, domain):
+                return None
+            resp = request_fn(next_url, allow_redirects=False, **kwargs)
+            if resp is None:
+                return None
+            hops += 1
+        return resp
+
     def _find_injectable_params(self, domain: str) -> List[Dict]:
         """Find parameters that might be injectable"""
         injectable = []
@@ -246,7 +293,7 @@ class SSTIInjection(TechniqueScanner):
                 canary = self._generate_canary()
                 url = f"https://{domain}{endpoint}?{param}={canary}"
 
-                resp = self.get(url, allow_redirects=True)
+                resp = self._follow_same_domain("GET", url, domain, self.get)
                 if resp and canary in resp.text:
                     injectable.append({
                         "url": f"https://{domain}{endpoint}",
@@ -256,9 +303,13 @@ class SSTIInjection(TechniqueScanner):
                     })
 
                 # Also test POST
-                resp_post = self.post(f"https://{domain}{endpoint}",
-                                     data={param: canary},
-                                     allow_redirects=True)
+                resp_post = self._follow_same_domain(
+                    "POST",
+                    f"https://{domain}{endpoint}",
+                    domain,
+                    self.post,
+                    data={param: canary}
+                )
                 if resp_post and canary in resp_post.text:
                     injectable.append({
                         "url": f"https://{domain}{endpoint}",
@@ -279,9 +330,11 @@ class SSTIInjection(TechniqueScanner):
         # Baseline response to avoid false positives on static content
         baseline_canary = self._generate_canary()
         if method == "GET":
-            baseline_resp = self.get(f"{url}?{param}={baseline_canary}", allow_redirects=True)
+            baseline_resp = self._follow_same_domain("GET", f"{url}?{param}={baseline_canary}", domain, self.get)
         else:
-            baseline_resp = self.post(url, data={param: baseline_canary}, allow_redirects=True)
+            baseline_resp = self._follow_same_domain("POST", url, domain, self.post, data={param: baseline_canary})
+        if baseline_resp is None:
+            return findings
         baseline_text = baseline_resp.text if baseline_resp and baseline_resp.text else ""
 
         for ssti in self.SSTI_PAYLOADS:
@@ -292,9 +345,9 @@ class SSTIInjection(TechniqueScanner):
 
             if method == "GET":
                 test_url = f"{url}?{param}={quote(payload)}"
-                resp = self.get(test_url, allow_redirects=True)
+                resp = self._follow_same_domain("GET", test_url, domain, self.get)
             else:
-                resp = self.post(url, data={param: payload}, allow_redirects=True)
+                resp = self._follow_same_domain("POST", url, domain, self.post, data={param: payload})
 
             if resp is None:
                 continue
@@ -325,9 +378,9 @@ class SSTIInjection(TechniqueScanner):
 
             if method == "GET":
                 test_url = f"{url}?{param}={quote(payload)}"
-                resp = self.get(test_url, allow_redirects=True)
+                resp = self._follow_same_domain("GET", test_url, domain, self.get)
             else:
-                resp = self.post(url, data={param: payload}, allow_redirects=True)
+                resp = self._follow_same_domain("POST", url, domain, self.post, data={param: payload})
 
             if resp is None:
                 continue
@@ -360,15 +413,21 @@ class SSTIInjection(TechniqueScanner):
         # Get baseline response
         baseline_canary = self._generate_canary()
         if method == "GET":
-            baseline_resp = self.get(f"{url}?{param}={baseline_canary}", allow_redirects=True)
+            start = time.time()
+            baseline_resp = self._follow_same_domain("GET", f"{url}?{param}={baseline_canary}", domain, self.get)
+            baseline_time = time.time() - start
         else:
-            baseline_resp = self.post(url, data={param: baseline_canary}, allow_redirects=True)
+            start = time.time()
+            baseline_resp = self._follow_same_domain("POST", url, domain, self.post, data={param: baseline_canary})
+            baseline_time = time.time() - start
 
         if baseline_resp is None:
             return findings
 
         baseline_len = len(baseline_resp.text)
-        baseline_time = baseline_resp.elapsed.total_seconds()
+        baseline_text = baseline_resp.text.lower()
+
+        compiled_errors = [re.compile(pat, re.IGNORECASE) for pat in self.SQL_ERROR_PATTERNS]
 
         for sql in self.SQL_PAYLOADS:
             if is_shutdown():
@@ -378,9 +437,13 @@ class SSTIInjection(TechniqueScanner):
 
             if method == "GET":
                 test_url = f"{url}?{param}={quote(payload)}"
-                resp = self.get(test_url, allow_redirects=True)
+                start = time.time()
+                resp = self._follow_same_domain("GET", test_url, domain, self.get)
+                resp_time = time.time() - start
             else:
-                resp = self.post(url, data={param: payload}, allow_redirects=True)
+                start = time.time()
+                resp = self._follow_same_domain("POST", url, domain, self.post, data={param: payload})
+                resp_time = time.time() - start
 
             if resp is None:
                 continue
@@ -388,8 +451,7 @@ class SSTIInjection(TechniqueScanner):
             # Error-based detection
             if "errors" in sql:
                 response_lower = resp.text.lower()
-                for error in sql["errors"]:
-                    if error in response_lower:
+                if any(r.search(response_lower) for r in compiled_errors) and not any(r.search(baseline_text) for r in compiled_errors):
                         findings.append({
                             "type": "sqli_error",
                             "name": sql["name"],
@@ -398,13 +460,28 @@ class SSTIInjection(TechniqueScanner):
                             "method": method,
                             "url": url,
                             "response_obj": resp,
-                            "evidence": f"SQL error indicator: {error}"
+                        "evidence": "SQL error pattern detected in response"
                         })
-                        break
 
             # Time-based detection
             if "time_based" in sql:
-                if resp.elapsed.total_seconds() >= sql["time_based"] - 1:
+                delays = 1 if resp_time >= sql["time_based"] - 1 and resp_time > baseline_time + 3 else 0
+                for _ in range(1):
+                    if is_shutdown():
+                        break
+                    if method == "GET":
+                        start = time.time()
+                        follow_resp = self._follow_same_domain("GET", test_url, domain, self.get)
+                        follow_time = time.time() - start
+                    else:
+                        start = time.time()
+                        follow_resp = self._follow_same_domain("POST", url, domain, self.post, data={param: payload})
+                        follow_time = time.time() - start
+                    if follow_resp is None:
+                        continue
+                    if follow_time >= sql["time_based"] - 1 and follow_time > baseline_time + 3:
+                        delays += 1
+                if delays >= 2:
                     findings.append({
                         "type": "sqli_time_based",
                         "name": sql["name"],
@@ -413,7 +490,7 @@ class SSTIInjection(TechniqueScanner):
                         "method": method,
                         "url": url,
                         "response_obj": resp,
-                        "evidence": f"Time-based SQLi: {resp.elapsed.total_seconds():.1f}s delay"
+                        "evidence": f"Time-based SQLi: consistent >= {sql['time_based']}s delay over multiple attempts"
                     })
 
             # Boolean-based detection
@@ -434,11 +511,11 @@ class SSTIInjection(TechniqueScanner):
         baseline_canary = self._generate_canary()
         if method == "GET":
             start = time.time()
-            baseline_resp = self.get(f"{url}?{param}={baseline_canary}", allow_redirects=True)
+            baseline_resp = self._follow_same_domain("GET", f"{url}?{param}={baseline_canary}", domain, self.get)
             baseline_time = time.time() - start
         else:
             start = time.time()
-            baseline_resp = self.post(url, data={param: baseline_canary}, allow_redirects=True)
+            baseline_resp = self._follow_same_domain("POST", url, domain, self.post, data={param: baseline_canary})
             baseline_time = time.time() - start
 
         if baseline_resp is None:
@@ -454,11 +531,11 @@ class SSTIInjection(TechniqueScanner):
             if method == "GET":
                 test_url = f"{url}?{param}={quote(payload)}"
                 start = time.time()
-                resp = self.get(test_url, allow_redirects=True)
+                resp = self._follow_same_domain("GET", test_url, domain, self.get)
                 resp_time = time.time() - start
             else:
                 start = time.time()
-                resp = self.post(url, data={param: payload}, allow_redirects=True)
+                resp = self._follow_same_domain("POST", url, domain, self.post, data={param: payload})
                 resp_time = time.time() - start
 
             if resp is None:
@@ -479,7 +556,23 @@ class SSTIInjection(TechniqueScanner):
 
             # Time-based detection
             if "time_based" in cmd:
-                if resp_time >= cmd["time_based"] - 1 and resp_time > baseline_time + 3:
+                delays = 1 if resp_time >= cmd["time_based"] - 1 and resp_time > baseline_time + 3 else 0
+                for _ in range(1):
+                    if is_shutdown():
+                        break
+                    if method == "GET":
+                        start = time.time()
+                        follow_resp = self._follow_same_domain("GET", test_url, domain, self.get)
+                        follow_time = time.time() - start
+                    else:
+                        start = time.time()
+                        follow_resp = self._follow_same_domain("POST", url, domain, self.post, data={param: payload})
+                        follow_time = time.time() - start
+                    if follow_resp is None:
+                        continue
+                    if follow_time >= cmd["time_based"] - 1 and follow_time > baseline_time + 3:
+                        delays += 1
+                if delays >= 2:
                     findings.append({
                         "type": "cmdi_time_based",
                         "name": cmd["name"],
@@ -488,7 +581,7 @@ class SSTIInjection(TechniqueScanner):
                         "method": method,
                         "url": url,
                         "response_obj": resp,
-                        "evidence": f"Time-based command injection: {resp_time:.1f}s delay"
+                        "evidence": f"Time-based command injection: consistent >= {cmd['time_based']}s delay over multiple attempts"
                     })
 
         return findings
@@ -677,6 +770,7 @@ class SSTIInjection(TechniqueScanner):
                     for sqf in sqli_findings:
                         severity = "high" if "error" in sqf["type"] else "medium"
                         confidence = "medium" if "error" in sqf["type"] else "low"
+                        evidence_type = "error_pattern" if "error" in sqf["type"] else "time_delay"
                         finding = self.create_finding(
                             domain=domain,
                             severity=severity,
@@ -688,8 +782,10 @@ class SSTIInjection(TechniqueScanner):
                                 f"Parameter: {sqf['parameter']}",
                                 f"Payload: {sqf['payload']}"
                             ],
+                            response_obj=sqf.get("response_obj"),
                             sub_technique="sqli",
                             confidence=confidence,
+                            evidence_type=evidence_type,
                             parameter=sqf["parameter"],
                             payload=sqf["payload"],
                             http_method=injectable.get("method"),

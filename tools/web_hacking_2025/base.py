@@ -73,6 +73,12 @@ class Finding:
             f"Category: {self.category}",
             f"Severity: {self.severity.upper()}",
             f"Timestamp: {self.timestamp}",
+        ]
+        if "confidence" in self.metadata:
+            lines.append(f"Confidence: {str(self.metadata.get('confidence')).upper()}")
+        if "evidence_type" in self.metadata:
+            lines.append(f"Evidence Type: {self.metadata.get('evidence_type')}")
+        lines.extend([
             f"-" * 80,
             f"Description:",
             f"  {self.description}",
@@ -81,7 +87,7 @@ class Finding:
             f"  {self.evidence}",
             f"-" * 80,
             f"Reproduction Steps:",
-        ]
+        ])
         for i, step in enumerate(self.reproduction_steps, 1):
             lines.append(f"  {i}. {step}")
 

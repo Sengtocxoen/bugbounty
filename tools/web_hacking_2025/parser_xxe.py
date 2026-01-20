@@ -30,7 +30,7 @@ class ParserXXE(TechniqueScanner):
     """Parser Differential and XXE vulnerability scanner"""
 
     TECHNIQUE_NAME = "parser_xxe"
-    TECHNIQUE_CATEGORY = "injection"
+    TECHNIQUE_CATEGORY = "parser"
 
     # XXE payloads (non-destructive detection)
     XXE_PAYLOADS = [
@@ -346,15 +346,23 @@ class ParserXXE(TechniqueScanner):
 
                     if resp.status_code in [301, 302, 303, 307, 308]:
                         location = resp.headers.get('Location', '')
-
-                        # Check if evil.com ended up in the location
-                        if 'evil.com' in location:
+                        if not location:
+                            continue
+                        absolute_location = urljoin(test_full, location)
+                        parsed = urlparse(absolute_location)
+                        if not parsed.netloc:
+                            continue
+                        # Require redirect to leave the original domain (no open redirect via query echo)
+                        if parsed.netloc.lower() == domain.lower() or parsed.netloc.lower().endswith(f".{domain.lower()}"):
+                            continue
+                        # Confirm the redirect truly goes to the external host in payload
+                        if parsed.netloc.lower().endswith("evil.com"):
                             findings.append({
                                 "type": "url_parser_confusion",
                                 "vuln_type": vuln_type,
                                 "original_url": test_url,
-                                "location": location,
-                                "evidence": f"URL parser confusion ({vuln_type}): redirected to {location}"
+                                "location": absolute_location,
+                                "evidence": f"URL parser confusion ({vuln_type}): redirected to {absolute_location}"
                             })
 
         return findings
@@ -534,7 +542,10 @@ class ParserXXE(TechniqueScanner):
                     reproduction_steps=[
                         f"Original URL: {uf['original_url']}",
                         f"Resulted in redirect to: {uf['location']}"
-                    ]
+                    ],
+                    sub_technique="url_parser_confusion",
+                    evidence_type="external_redirect",
+                    confidence="medium"
                 )
                 findings.append(finding)
                 progress.add_finding(domain, finding)
