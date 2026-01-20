@@ -213,6 +213,26 @@ The suite includes the following tools:
 
 ## Usage
 
+### Unified One-Command Runner
+
+Run the full pipeline (deep scan + web_hacking_2025 techniques) from a single script:
+
+```bash
+# Full run on a single target
+python tools/run_all.py example.com -p amazon -u myh1user
+
+# Run from a file of targets
+python tools/run_all.py -f targets.txt -p shopify -u myh1user
+
+# Use discovered subdomains for technique scanning
+python tools/run_all.py example.com --scan-discovered
+
+# Skip deep scan (run only web_hacking_2025)
+python tools/run_all.py example.com --skip-deep
+```
+
+Outputs are saved under `./combined_results/deep_scan` and `./combined_results/web_hacking_2025`.
+
 ### Running the Scanner
 
 1. For a single target:
