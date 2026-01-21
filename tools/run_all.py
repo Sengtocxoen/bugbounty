@@ -44,7 +44,12 @@ def collect_targets(positional: str, file_path: str, targets: List[str]) -> List
 
 
 def run_deep_scan(args: argparse.Namespace) -> Dict:
-    deep_output = Path(args.output) / "deep_scan"
+    # Create target-specific output folders
+    if len(args.targets_list) == 1:
+        safe_target = normalize_domain(args.targets_list[0]).replace("://", "_").replace("/", "_").replace(":", "_")
+        deep_output = Path(args.output) / safe_target / "deep_scan"
+    else:
+        deep_output = Path(args.output) / "deep_scan"
     deep_config = DeepScanConfig(
         targets=args.targets_list,
         program=args.program,
@@ -83,7 +88,12 @@ def derive_scan_domains(deep_results: Dict, args: argparse.Namespace) -> List[st
 
 
 def run_web_scanner(domains: List[str], args: argparse.Namespace):
-    web_output = Path(args.output) / "web_hacking_2025"
+    # Create target-specific output folders for single target
+    if len(domains) == 1:
+        safe_domain = domains[0].replace("://", "_").replace("/", "_").replace(":", "_")
+        web_output = Path(args.output) / safe_domain / "web_hacking_2025"
+    else:
+        web_output = Path(args.output) / "web_hacking_2025"
     web_output.mkdir(parents=True, exist_ok=True)
 
     rate_limit = args.rate

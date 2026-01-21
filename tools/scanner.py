@@ -745,10 +745,20 @@ class AmazonScanner(BaseScanner):
 
     def save_results(self, results: List[ScanResult], filename: str = None) -> Path:
         """Save scan results to JSON file with FP detection stats"""
-        if not filename:
-            filename = f"amazon_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-        output_path = self.config.output_dir / filename
+        # Create target-specific folder if single target, otherwise use combined folder
+        if len(results) == 1:
+            safe_target = results[0].target.replace("://", "_").replace("/", "_").replace(":", "_")
+            target_dir = self.config.output_dir / safe_target
+        else:
+            target_dir = self.config.output_dir / f"combined_{timestamp}"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        if not filename:
+            filename = f"amazon_scan_{timestamp}.json"
+
+        output_path = target_dir / filename
 
         # Count verified findings
         verified_findings = sum(
@@ -979,10 +989,20 @@ class ShopifyScanner(BaseScanner):
 
     def save_results(self, results: List[ScanResult], filename: str = None) -> Path:
         """Save scan results to JSON file with FP detection stats"""
-        if not filename:
-            filename = f"shopify_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-        output_path = self.config.output_dir / filename
+        # Create target-specific folder if single target, otherwise use combined folder
+        if len(results) == 1:
+            safe_target = results[0].target.replace("://", "_").replace("/", "_").replace(":", "_")
+            target_dir = self.config.output_dir / safe_target
+        else:
+            target_dir = self.config.output_dir / f"combined_{timestamp}"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        if not filename:
+            filename = f"shopify_scan_{timestamp}.json"
+
+        output_path = target_dir / filename
 
         # Count verified findings
         verified_findings = sum(
