@@ -748,13 +748,17 @@ class DeepScanner:
 
     def save_results(self, target: str, result: DeepScanResult):
         """Save scan results to files"""
-        # Clean target for filename
+        # Clean target for folder name
         safe_target = target.replace("://", "_").replace("/", "_").replace(":", "_")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+        # Create target-specific output folder
+        target_dir = self.config.output_dir / safe_target
+        target_dir.mkdir(parents=True, exist_ok=True)
+
         # Save JSON
         if self.config.save_json:
-            json_file = self.config.output_dir / f"deep_scan_{safe_target}_{timestamp}.json"
+            json_file = target_dir / f"deep_scan_{timestamp}.json"
             with open(json_file, 'w') as f:
                 # Convert dataclass to dict for JSON serialization
                 data = {
@@ -792,7 +796,7 @@ class DeepScanner:
 
         # Save TXT summary
         if self.config.save_txt:
-            txt_file = self.config.output_dir / f"deep_scan_{safe_target}_{timestamp}.txt"
+            txt_file = target_dir / f"deep_scan_{timestamp}.txt"
             with open(txt_file, 'w') as f:
                 f.write("="*80 + "\n")
                 f.write("DEEP BUG BOUNTY SCAN REPORT\n")

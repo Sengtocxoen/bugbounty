@@ -199,8 +199,10 @@ class ScanProgress:
 
     def _save_finding(self, finding: Finding):
         """Save individual finding immediately"""
-        findings_dir = self.output_dir / "findings"
-        findings_dir.mkdir(exist_ok=True)
+        # Create domain-specific findings folder
+        safe_domain = finding.domain.replace("://", "_").replace("/", "_").replace(":", "_")
+        findings_dir = self.output_dir / safe_domain / "findings"
+        findings_dir.mkdir(parents=True, exist_ok=True)
 
         # Save to severity-based files
         severity_file = findings_dir / f"{finding.severity}_findings.json"
