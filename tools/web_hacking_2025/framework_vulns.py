@@ -277,37 +277,23 @@ class FrameworkVulns(TechniqueScanner):
             "powered_by": powered_by
         }
 
+    def _contains_secrets(self, text: str) -> bool:
+        if not text:
+            return False
+        lower = text.lower()
+        secret_markers = [
+            "password", "secret", "token", "apikey", "api_key", "access_key",
+            "client_secret", "private_key", "connectionstring", "db_password"
+        ]
+        if any(marker in lower for marker in secret_markers):
+            return True
+        if "begin rsa private key" in lower or "begin private key" in lower:
+            return True
+        return False
+
     def _scan_aspnet(self, domain: str) -> List[Dict]:
         """Scan for ASP.NET specific vulnerabilities"""
         findings = []
-
-        for endpoint in self.ASPNET_ENDPOINTS:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-            resp = self.get(url, allow_redirects=False)
-
-            if resp and resp.status_code == 200:
-                findings.append({
-                    "type": "aspnet_exposure",
-                    "endpoint": endpoint,
-                    "status": resp.status_code,
-                    "evidence": f"ASP.NET endpoint accessible: {endpoint}"
-                })
-
-        # Test ViewState tampering potential
-        resp = self.get(f"https://{domain}/", allow_redirects=True)
-        if resp and '__VIEWSTATE' in resp.text:
-            viewstate_match = re.search(r'__VIEWSTATE.*?value="([^"]+)"', resp.text)
-            if viewstate_match:
-                viewstate = viewstate_match.group(1)
-                # Check if ViewState is not encrypted (starts with /w)
-                if viewstate.startswith('/w'):
-                    findings.append({
-                        "type": "viewstate_unencrypted",
-                        "evidence": "ViewState appears unencrypted - potential deserialization target"
-                    })
 
         # Test path traversal with .aspx
         traversal_payloads = [
@@ -348,40 +334,19 @@ class FrameworkVulns(TechniqueScanner):
                 continue
 
             if resp.status_code == 200:
-                sensitive_actuators = ['env', 'configprops', 'heapdump', 'threaddump', 'mappings', 'beans', 'jolokia']
+                sensitive_actuators = ['env', 'configprops', 'heapdump', 'threaddump', 'logfile', 'jolokia']
                 is_sensitive = any(s in endpoint for s in sensitive_actuators)
+                content_type = resp.headers.get("Content-Type", "").lower()
+                is_html = "text/html" in content_type or "<html" in (resp.text or "").lower()[:500]
+                looks_binary = any(x in content_type for x in ["octet-stream", "zip", "gzip"])
 
-                findings.append({
-                    "type": "actuator_exposure" if 'actuator' in endpoint else "java_exposure",
-                    "endpoint": endpoint,
-                    "sensitive": is_sensitive,
-                    "evidence": f"Java/Spring endpoint accessible: {endpoint}"
-                })
-
-                # Check for credentials in /actuator/env
-                if 'env' in endpoint:
-                    if any(s in resp.text.lower() for s in ['password', 'secret', 'key', 'token', 'credential']):
+                if is_sensitive:
+                    if self._contains_secrets(resp.text) or looks_binary or (len(resp.content) > 5000 and not is_html):
                         findings.append({
-                            "type": "credential_exposure",
+                            "type": "actuator_sensitive_exposure",
                             "endpoint": endpoint,
-                            "evidence": "Sensitive data potentially exposed in /actuator/env"
+                            "evidence": f"Sensitive Spring endpoint exposed: {endpoint}"
                         })
-
-        # Test for Spring4Shell indicators
-        test_url = f"https://{domain}/"
-        spring_payload = {
-            "class.module.classLoader.resources.context.parent.pipeline.first.pattern": "%25%7Bc2%7Di",
-            "class.module.classLoader.resources.context.parent.pipeline.first.suffix": ".jsp"
-        }
-
-        resp = self.post(test_url, data=spring_payload, allow_redirects=False)
-        if resp and resp.status_code in [200, 400]:
-            # Check if payload was processed
-            if 'class' in resp.text.lower():
-                findings.append({
-                    "type": "spring4shell_indicator",
-                    "evidence": "Spring application may be vulnerable to class loader manipulation"
-                })
 
         return findings
 
@@ -397,14 +362,6 @@ class FrameworkVulns(TechniqueScanner):
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code == 200:
-                sensitive = endpoint in ['/.env', '/wp-config.php', '/configuration.php', '/.git/config']
-                findings.append({
-                    "type": "php_exposure",
-                    "endpoint": endpoint,
-                    "sensitive": sensitive,
-                    "evidence": f"PHP file/config accessible: {endpoint}"
-                })
-
                 # Check for phpinfo exposure
                 if 'phpinfo' in endpoint and 'PHP Version' in resp.text:
                     version_match = re.search(r'PHP Version.*?(\d+\.\d+\.\d+)', resp.text)
@@ -414,33 +371,15 @@ class FrameworkVulns(TechniqueScanner):
                             "version": version_match.group(1),
                             "evidence": f"PHPInfo exposed - Version: {version_match.group(1)}"
                         })
+                        continue
 
-        # Test PHP type juggling
-        type_juggle_endpoints = ["/api/login", "/login", "/api/auth"]
-        for endpoint in type_juggle_endpoints:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-
-            # Test boolean type juggling
-            payloads = [
-                {"password": True},
-                {"password": 0},
-                {"password": []},
-                {"password": "0e123456"},  # Magic hash
-            ]
-
-            for payload in payloads:
-                resp = self.post(url, json=payload, allow_redirects=False)
-                if resp and resp.status_code == 200:
-                    if 'success' in resp.text.lower() or 'welcome' in resp.text.lower():
-                        findings.append({
-                            "type": "type_juggling",
-                            "endpoint": endpoint,
-                            "payload": str(payload),
-                            "evidence": f"Type juggling may be possible: {payload}"
-                        })
+                sensitive = endpoint in ['/.env', '/wp-config.php', '/configuration.php', '/.git/config', '/config.php']
+                if sensitive and self._contains_secrets(resp.text):
+                    findings.append({
+                        "type": "php_sensitive_exposure",
+                        "endpoint": endpoint,
+                        "evidence": f"Sensitive PHP config exposed: {endpoint}"
+                    })
 
         return findings
 
@@ -456,31 +395,26 @@ class FrameworkVulns(TechniqueScanner):
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code == 200:
-                findings.append({
-                    "type": "nodejs_exposure",
-                    "endpoint": endpoint,
-                    "evidence": f"Node.js file accessible: {endpoint}"
-                })
+                if endpoint in ["/.npmrc", "/npm-debug.log"] and self._contains_secrets(resp.text):
+                    findings.append({
+                        "type": "node_sensitive_exposure",
+                        "endpoint": endpoint,
+                        "evidence": f"Sensitive Node.js config exposed: {endpoint}"
+                    })
 
-                # Check for dependencies in package.json
-                if 'package.json' in endpoint:
-                    try:
-                        pkg = resp.json()
-                        deps = list(pkg.get('dependencies', {}).keys())
-                        findings.append({
-                            "type": "dependencies_exposed",
-                            "dependencies": deps[:10],
-                            "evidence": f"Dependencies exposed: {deps[:5]}"
-                        })
-                    except:
-                        pass
-
-        # Test prototype pollution via query params
+        # Test prototype pollution via query params (requires propagation evidence)
+        pp_token = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
         pp_payloads = [
-            "__proto__[admin]=1",
-            "constructor[prototype][admin]=1",
-            "__proto__.admin=1",
+            f"__proto__[polluted_pp_test]={pp_token}",
+            f"constructor[prototype][polluted_pp_test]={pp_token}",
+            f"__proto__.polluted_pp_test={pp_token}",
         ]
+        verify_paths = ["/api/user/profile", "/api/config", "/"]
+        baseline_texts = {}
+
+        for path in verify_paths:
+            resp = self.get(f"https://{domain}{path}", allow_redirects=True)
+            baseline_texts[path] = resp.text if resp else ""
 
         for payload in pp_payloads:
             if is_shutdown():
@@ -489,12 +423,20 @@ class FrameworkVulns(TechniqueScanner):
             url = f"https://{domain}/?{payload}"
             resp = self.get(url, allow_redirects=True)
 
-            if resp and resp.status_code == 200:
-                if 'admin' in resp.text.lower():
+            if resp and resp.status_code in [200, 201, 204]:
+                # Verify pollution propagates to a separate request
+                propagated = False
+                for path in verify_paths:
+                    verify_resp = self.get(f"https://{domain}{path}", allow_redirects=True)
+                    if verify_resp and pp_token in verify_resp.text and pp_token not in baseline_texts.get(path, ""):
+                        propagated = True
+                        break
+
+                if propagated:
                     findings.append({
-                        "type": "prototype_pollution_indicator",
+                        "type": "prototype_pollution",
                         "payload": payload,
-                        "evidence": f"Prototype pollution may be possible via: {payload}"
+                        "evidence": f"Prototype pollution confirmed: polluted_pp_test propagated via {payload}"
                     })
 
         return findings
@@ -511,86 +453,19 @@ class FrameworkVulns(TechniqueScanner):
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code == 200:
-                findings.append({
-                    "type": "rails_exposure",
-                    "endpoint": endpoint,
-                    "evidence": f"Rails endpoint accessible: {endpoint}"
-                })
-
-        # Test mass assignment
-        test_endpoints = ["/api/users", "/users", "/api/account"]
-        mass_assign_payloads = [
-            {"user": {"admin": True, "role": "admin"}},
-            {"admin": True, "role": "admin"},
-            {"user[admin]": True, "user[role]": "admin"},
-        ]
-
-        for endpoint in test_endpoints:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-
-            for payload in mass_assign_payloads:
-                resp = self.post(url, json=payload, allow_redirects=False)
-                if resp and resp.status_code in [200, 201, 422]:
-                    # Check if admin field was processed
-                    if 'admin' in resp.text.lower():
-                        findings.append({
-                            "type": "mass_assignment_indicator",
-                            "endpoint": endpoint,
-                            "payload": str(payload),
-                            "evidence": "Mass assignment may be possible"
-                        })
+                if endpoint in ["/config/database.yml", "/config/secrets.yml"] and self._contains_secrets(resp.text):
+                    findings.append({
+                        "type": "rails_sensitive_exposure",
+                        "endpoint": endpoint,
+                        "evidence": f"Sensitive Rails config exposed: {endpoint}"
+                    })
 
         return findings
 
     def _scan_orm_injection(self, domain: str) -> List[Dict]:
         """Scan for ORM injection vulnerabilities"""
-        findings = []
-
-        api_endpoints = [
-            "/api/users",
-            "/api/search",
-            "/api/query",
-            "/api/filter",
-            "/graphql",
-        ]
-
-        for endpoint in api_endpoints:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-
-            for payload in self.ORM_PAYLOADS:
-                resp = self.post(url, json=payload, allow_redirects=False)
-
-                if resp is None:
-                    continue
-
-                # Check for ORM-specific errors or unexpected success
-                response_text = resp.text.lower()
-
-                if resp.status_code == 500:
-                    if any(err in response_text for err in ['prisma', 'sequelize', 'typeorm', 'sqlalchemy', 'activerecord']):
-                        findings.append({
-                            "type": "orm_error",
-                            "endpoint": endpoint,
-                            "payload": str(payload),
-                            "evidence": f"ORM error triggered - potential injection point"
-                        })
-
-                elif resp.status_code == 200:
-                    if '$where' in str(payload) or '$ne' in str(payload):
-                        findings.append({
-                            "type": "orm_nosql_injection",
-                            "endpoint": endpoint,
-                            "payload": str(payload),
-                            "evidence": "NoSQL/ORM injection may be possible"
-                        })
-
-        return findings
+        # Disabled: ORM errors are not confirmation of injection.
+        return []
 
     def scan(self, domain: str, progress: ScanProgress) -> List[Finding]:
         """Scan domain for framework-specific vulnerabilities"""

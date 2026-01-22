@@ -191,6 +191,42 @@ class SSRFDetection(TechniqueScanner):
     def _generate_canary(self) -> str:
         return 'ssrf' + ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
 
+    def _extract_internal_indicators(self, resp, baseline_text: str = "") -> List[str]:
+        """Extract strong indicators of internal service responses."""
+        indicators = []
+        if resp is None:
+            return indicators
+
+        response_lower = (resp.text or "").lower()
+        baseline_lower = (baseline_text or "").lower()
+        content_type = resp.headers.get('Content-Type', '').lower()
+        is_html_page = 'text/html' in content_type or '<html' in response_lower[:500]
+
+        def _add_indicator(name: str, needle: str) -> None:
+            if needle in response_lower and needle not in baseline_lower:
+                indicators.append(name)
+
+        # HTML default pages
+        if is_html_page:
+            if 'welcome to nginx' in response_lower and 'nginx' in response_lower[:500]:
+                _add_indicator("nginx_default_page", "welcome to nginx")
+            if 'apache' in response_lower[:500] and ('it works' in response_lower or 'test page' in response_lower):
+                _add_indicator("apache_default_page", "it works")
+            if 'directory listing' in response_lower or 'index of /' in response_lower:
+                _add_indicator("directory_listing", "index of /")
+        else:
+            # Non-HTML service indicators
+            if 'redis_version' in response_lower or 'connected_clients' in response_lower:
+                _add_indicator("redis_service", "redis_version")
+            if 'mongodb' in response_lower and 'errmsg' in response_lower:
+                _add_indicator("mongodb_service", "errmsg")
+            if 'elasticsearch' in response_lower or '"cluster_name"' in resp.text:
+                _add_indicator("elasticsearch_service", "cluster_name")
+            if 'postgresql' in response_lower or 'pgadmin' in response_lower:
+                _add_indicator("postgresql_service", "postgresql")
+
+        return indicators
+
     def _find_ssrf_endpoints(self, domain: str) -> List[Dict]:
         """Find endpoints that might be vulnerable to SSRF"""
         endpoints = []
@@ -331,8 +367,7 @@ class SSRFDetection(TechniqueScanner):
         if baseline_resp is None:
             return findings
 
-        baseline_len = len(baseline_resp.text)
-        baseline_time = baseline_resp.elapsed.total_seconds()
+        baseline_text = baseline_resp.text if baseline_resp.text else ""
 
         for target in self.INTERNAL_TARGETS[:10]:  # Limit for efficiency
             if is_shutdown():
@@ -348,34 +383,7 @@ class SSRFDetection(TechniqueScanner):
                 continue
 
             # Check response content for internal access indicators
-            resp_text = resp.text.lower()
-            content_type = resp.headers.get('Content-Type', '').lower()
-            is_html_page = 'text/html' in content_type or '<html' in resp_text[:500]
-
-            # IMPORTANT: Length difference alone is NOT sufficient evidence
-            # We need actual internal content indicators
-
-            # Strong indicators of actual internal access (not just any HTML page)
-            internal_indicators = []
-
-            # Check for actual internal service responses
-            if 'nginx' in resp_text[:200] and 'welcome to nginx' in resp_text.lower():
-                internal_indicators.append("nginx_default_page")
-            if 'apache' in resp_text[:500] and ('it works' in resp_text.lower() or 'test page' in resp_text.lower()):
-                internal_indicators.append("apache_default_page")
-            if 'directory listing' in resp_text.lower() or 'index of /' in resp_text.lower():
-                internal_indicators.append("directory_listing")
-
-            # Check for service-specific responses (non-HTML)
-            if not is_html_page:
-                if 'redis_version' in resp_text or 'connected_clients' in resp_text:
-                    internal_indicators.append("redis_service")
-                if 'mongodb' in resp_text.lower() and 'errmsg' in resp_text.lower():
-                    internal_indicators.append("mongodb_service")
-                if 'elasticsearch' in resp_text.lower() or '"cluster_name"' in resp_text:
-                    internal_indicators.append("elasticsearch_service")
-                if 'postgresql' in resp_text.lower() or 'pgadmin' in resp_text.lower():
-                    internal_indicators.append("postgresql_service")
+            internal_indicators = self._extract_internal_indicators(resp, baseline_text=baseline_text)
 
             # Only report if we have concrete internal content evidence
             if internal_indicators:
@@ -388,11 +396,6 @@ class SSRFDetection(TechniqueScanner):
                     "internal_indicators": internal_indicators,
                     "evidence": f"Internal service access detected: {', '.join(internal_indicators)}"
                 })
-
-            # Timing anomalies: only report SIGNIFICANT timing differences (>5s) with multiple confirmations
-            # Single timing differences can be caused by network variance
-            resp_time = resp.elapsed.total_seconds()
-            # Note: Removed weak timing-only detection - timing alone is not reliable SSRF evidence
 
         return findings
 
@@ -523,6 +526,13 @@ class SSRFDetection(TechniqueScanner):
         method = endpoint["method"]
 
         open_ports = []
+        baseline_url = "https://example.com"
+        if method == "GET":
+            baseline_resp = self.get(f"{url}?{param}={baseline_url}", allow_redirects=True, timeout=5)
+        else:
+            baseline_resp = self.post(url, data={param: baseline_url}, allow_redirects=True, timeout=5)
+
+        baseline_text = baseline_resp.text if baseline_resp and baseline_resp.text else ""
 
         for port, service in self.INTERNAL_PORTS[:8]:  # Limit scan
             if is_shutdown():
@@ -543,9 +553,9 @@ class SSRFDetection(TechniqueScanner):
             if resp is None:
                 continue
 
-            # Open port indicators
-            if resp.status_code == 200 and len(resp.text) > 50:
-                open_ports.append((port, service, resp_time))
+            indicators = self._extract_internal_indicators(resp, baseline_text=baseline_text)
+            if indicators:
+                open_ports.append((port, service, resp_time, indicators))
 
         if len(open_ports) >= 2:
             findings.append({
@@ -554,7 +564,7 @@ class SSRFDetection(TechniqueScanner):
                 "endpoint": url,
                 "method": method,
                 "response_obj": resp,
-                "evidence": f"Internal port scan possible: {[f'{p}({s})' for p, s, _ in open_ports]}"
+                "evidence": f"Internal service banners observed via SSRF on ports: {[f'{p}({s})' for p, s, _, _ in open_ports]}"
             })
 
         return findings

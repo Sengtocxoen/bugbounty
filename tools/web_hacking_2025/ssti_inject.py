@@ -293,6 +293,32 @@ class SSTIInjection(TechniqueScanner):
 
         return True
 
+    def _build_ssti_variants(self, payload: str, expected: str) -> List[Dict[str, str]]:
+        """Create unique SSTI payload variants to reduce false positives."""
+        # Math-based payloads: replace 7*7 with unique values and expect unique results
+        if expected.isdigit() and "7*7" in payload:
+            a1, b1 = random.randint(11, 97), random.randint(11, 97)
+            a2, b2 = random.randint(11, 97), random.randint(11, 97)
+            while a1 * b1 == a2 * b2:
+                a2, b2 = random.randint(11, 97), random.randint(11, 97)
+            expr1 = f"{a1}*{b1}"
+            expr2 = f"{a2}*{b2}"
+            return [
+                {"payload": payload.replace("7*7", expr1), "expect": str(a1 * b1)},
+                {"payload": payload.replace("7*7", expr2), "expect": str(a2 * b2)},
+            ]
+
+        # String-based payloads (upper) should use unique token
+        if "upper()" in payload and "test" in payload:
+            token1 = self._generate_canary()
+            token2 = self._generate_canary()
+            return [
+                {"payload": payload.replace("test", token1), "expect": token1.upper()},
+                {"payload": payload.replace("test", token2), "expect": token2.upper()},
+            ]
+
+        return [{"payload": payload, "expect": expected}]
+
     def _same_domain(self, url: str, domain: str) -> bool:
         try:
             host = urlparse(url).netloc.lower()
@@ -396,13 +422,13 @@ class SSTIInjection(TechniqueScanner):
             if is_shutdown():
                 break
 
-            payload = ssti["payload"]
+            variants = self._build_ssti_variants(ssti["payload"], ssti["expect"])
 
             if method == "GET":
-                test_url = f"{url}?{param}={quote(payload)}"
+                test_url = f"{url}?{param}={quote(variants[0]['payload'])}"
                 resp = self._follow_same_domain("GET", test_url, domain, self.get)
             else:
-                resp = self._follow_same_domain("POST", url, domain, self.post, data={param: payload})
+                resp = self._follow_same_domain("POST", url, domain, self.post, data={param: variants[0]['payload']})
 
             if resp is None:
                 continue
@@ -410,26 +436,60 @@ class SSTIInjection(TechniqueScanner):
             # Check for expected output with proper false positive validation
             # Just finding "49" in a page is NOT proof of SSTI - could be price, page number, etc.
             if ssti["expect"] != "error":
-                expected = ssti["expect"]
+                # Require two distinct payloads to both evaluate correctly
+                if len(variants) >= 2:
+                    variant_a, variant_b = variants[0], variants[1]
 
-                # Basic check: expected value in response but not in baseline
-                if expected in resp.text and expected not in baseline_text:
-                    # IMPORTANT: Validate evidence to avoid false positives
-                    if self._validate_ssti_evidence(resp.text, expected):
-                        reflection_possible = payload in resp.text
-                        findings.append({
-                            "type": "ssti_confirmed",
-                            "name": ssti["name"],
-                            "engines": ssti["engines"],
-                            "parameter": param,
-                            "payload": payload,
-                            "method": method,
-                            "url": url,
-                            "response_obj": resp,
-                            "reflection_possible": reflection_possible,
-                            "evidence": f"SSTI output observed: {payload} -> {expected} (context validated)"
-                        })
-                        break  # Found it, no need to test more
+                    if method == "GET":
+                        test_url_b = f"{url}?{param}={quote(variant_b['payload'])}"
+                        resp_b = self._follow_same_domain("GET", test_url_b, domain, self.get)
+                    else:
+                        resp_b = self._follow_same_domain("POST", url, domain, self.post, data={param: variant_b['payload']})
+
+                    if resp_b is None:
+                        continue
+
+                    expected_a = variant_a["expect"]
+                    expected_b = variant_b["expect"]
+                    resp_a_text = resp.text or ""
+                    resp_b_text = resp_b.text or ""
+
+                    if (expected_a in resp_a_text and expected_b in resp_b_text and
+                            expected_a not in baseline_text and expected_b not in baseline_text and
+                            expected_a not in resp_b_text and expected_b not in resp_a_text):
+                        if self._validate_ssti_evidence(resp_a_text, expected_a) and self._validate_ssti_evidence(resp_b_text, expected_b):
+                            reflection_possible = variant_a["payload"] in resp_a_text or variant_b["payload"] in resp_b_text
+                            findings.append({
+                                "type": "ssti_confirmed",
+                                "name": ssti["name"],
+                                "engines": ssti["engines"],
+                                "parameter": param,
+                                "payload": variant_a["payload"],
+                                "method": method,
+                                "url": url,
+                                "response_obj": resp_b,
+                                "reflection_possible": reflection_possible,
+                                "evidence": f"SSTI output observed: {variant_a['payload']} -> {expected_a} and {variant_b['payload']} -> {expected_b}"
+                            })
+                            break  # Found it, no need to test more
+                else:
+                    expected = variants[0]["expect"]
+                    if expected in resp.text and expected not in baseline_text:
+                        if self._validate_ssti_evidence(resp.text, expected):
+                            reflection_possible = variants[0]["payload"] in resp.text
+                            findings.append({
+                                "type": "ssti_confirmed",
+                                "name": ssti["name"],
+                                "engines": ssti["engines"],
+                                "parameter": param,
+                                "payload": variants[0]["payload"],
+                                "method": method,
+                                "url": url,
+                                "response_obj": resp,
+                                "reflection_possible": reflection_possible,
+                                "evidence": f"SSTI output observed: {variants[0]['payload']} -> {expected} (context validated)"
+                            })
+                            break  # Found it, no need to test more
 
         # Test blind SSTI (error-based)
         for blind in self.BLIND_SSTI_PAYLOADS:
@@ -568,6 +628,7 @@ class SSTIInjection(TechniqueScanner):
         url = injectable["url"]
         param = injectable["parameter"]
         method = injectable["method"]
+        cmd_token = "cmd" + ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
 
         # Get baseline time/response
         baseline_canary = self._generate_canary()
@@ -588,7 +649,10 @@ class SSTIInjection(TechniqueScanner):
             if is_shutdown():
                 break
 
-            payload = cmd["payload"]
+            payload = cmd["payload"].replace("CMDINJECTED", cmd_token)
+            expected_token = cmd.get("expect")
+            if expected_token:
+                expected_token = cmd_token
 
             if method == "GET":
                 test_url = f"{url}?{param}={quote(payload)}"
@@ -604,7 +668,7 @@ class SSTIInjection(TechniqueScanner):
                 continue
 
             # Echo-based detection (avoid baseline reflection)
-            if "expect" in cmd and cmd["expect"] in resp.text and cmd["expect"] not in baseline_text:
+            if expected_token and expected_token in resp.text and expected_token not in baseline_text:
                 findings.append({
                     "type": "cmdi_confirmed",
                     "name": cmd["name"],
@@ -613,7 +677,7 @@ class SSTIInjection(TechniqueScanner):
                     "method": method,
                     "url": url,
                     "response_obj": resp,
-                    "evidence": f"Command output observed: {cmd['expect']} in response"
+                    "evidence": f"Command output observed: {expected_token} in response"
                 })
 
             # Time-based detection

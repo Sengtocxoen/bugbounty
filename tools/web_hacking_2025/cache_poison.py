@@ -91,6 +91,24 @@ class CachePoisoning(TechniqueScanner):
         """Generate a unique canary value for detection"""
         return ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
 
+    def _is_cacheable_response(self, resp) -> bool:
+        if resp is None:
+            return False
+        cache_control = resp.headers.get('Cache-Control', '').lower()
+        if 'no-store' in cache_control or 'private' in cache_control:
+            return False
+        return True
+
+    def _is_cache_hit(self, resp) -> bool:
+        if resp is None:
+            return False
+        x_cache = resp.headers.get('X-Cache', '').upper()
+        x_cache_status = resp.headers.get('X-Cache-Status', '').upper()
+        cf_cache = resp.headers.get('CF-Cache-Status', '').upper()
+        age = resp.headers.get('Age', '')
+        return ('HIT' in x_cache or 'HIT' in x_cache_status or cf_cache == 'HIT' or
+                (age.isdigit() and int(age) > 0))
+
     def _check_caching(self, domain: str, path: str = "/") -> Optional[CacheTestResult]:
         """Check if a URL is being cached"""
         url = f"https://{domain}{path}"
@@ -178,21 +196,14 @@ class CachePoisoning(TechniqueScanner):
                 time.sleep(0.5)
                 resp2 = self.get(url)
 
-                if resp2 and canary in resp2.text:
+                if (resp2 and canary in resp2.text and
+                        self._is_cacheable_response(resp2) and self._is_cache_hit(resp2)):
                     findings.append({
                         "header": header_name,
                         "value": test_value,
                         "url": url,
                         "cached": True,
                         "evidence": f"Unkeyed header '{header_name}' value cached and reflected"
-                    })
-                else:
-                    findings.append({
-                        "header": header_name,
-                        "value": test_value,
-                        "url": url,
-                        "cached": False,
-                        "evidence": f"Header '{header_name}' reflected but not cached (still potential for exploitation)"
                     })
 
         return findings
@@ -267,7 +278,11 @@ class CachePoisoning(TechniqueScanner):
             if baseline is None:
                 continue
 
+            if not self._is_cacheable_response(baseline):
+                continue
+
             baseline_hash = hashlib.md5(baseline.content).hexdigest()
+            baseline_cached = self._is_cache_hit(baseline)
 
             for norm_name, norm_char in self.PATH_NORMALIZATION:
                 # Test if normalization bypasses caching
@@ -278,6 +293,17 @@ class CachePoisoning(TechniqueScanner):
                 if test_resp is None:
                     continue
 
+                time.sleep(0.5)
+                test_resp_cached = self.get(test_url)
+                if test_resp_cached is None:
+                    continue
+
+                if not self._is_cacheable_response(test_resp_cached):
+                    continue
+
+                if not (baseline_cached or self._is_cache_hit(test_resp_cached)):
+                    continue
+
                 test_hash = hashlib.md5(test_resp.content).hexdigest()
 
                 # Same content but different path = normalization issue
@@ -286,7 +312,7 @@ class CachePoisoning(TechniqueScanner):
                         "technique": norm_name,
                         "original_path": base_path,
                         "normalized_path": test_path,
-                        "evidence": f"Path '{test_path}' normalizes to '{base_path}' - potential cache key issue"
+                        "evidence": f"Path '{test_path}' normalizes to '{base_path}' with cacheable responses"
                     })
 
         return findings
@@ -384,17 +410,17 @@ class CachePoisoning(TechniqueScanner):
             header_findings = self._test_unkeyed_header_poisoning(domain)
 
             for hf in header_findings:
-                severity = "high" if hf.get("cached") else "medium"
+                severity = "high"
                 finding = self.create_finding(
                     domain=domain,
                     severity=severity,
                     title=f"Unkeyed Header Poisoning: {hf['header']}",
-                    description=f"Header '{hf['header']}' value is reflected and {'cached' if hf.get('cached') else 'potentially cacheable'}",
+                    description=f"Header '{hf['header']}' value is reflected and cached",
                     evidence=hf["evidence"],
                     reproduction_steps=[
                         f"Send request with header: {hf['header']}: {hf['value']}",
                         "Observe that header value is reflected in response",
-                        "Second request without header may still contain poisoned content" if hf.get("cached") else "Test with different cache busters to confirm caching"
+                        "Second request without header still contains poisoned content"
                     ],
                     header=hf["header"],
                     test_url=hf["url"]
@@ -432,14 +458,14 @@ class CachePoisoning(TechniqueScanner):
             for nf in norm_findings:
                 finding = self.create_finding(
                     domain=domain,
-                    severity="medium",
+                    severity="low",
                     title=f"Cache Key Path Normalization: {nf['technique']}",
-                    description="Different URL paths normalize to same content, potential cache poisoning vector",
+                    description="Different URL paths normalize to same cached content (requires poisoning proof)",
                     evidence=nf["evidence"],
                     reproduction_steps=[
                         f"Access original path: {nf['original_path']}",
                         f"Access normalized path: {nf['normalized_path']}",
-                        "Both return identical content, indicating path normalization"
+                        "Both return identical cached content; validate poisoning separately"
                     ]
                 )
                 findings.append(finding)

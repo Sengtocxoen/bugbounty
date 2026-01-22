@@ -123,6 +123,30 @@ class AuthBypass(TechniqueScanner):
             "/actuator", "/metrics", "/health"
         ]
 
+    def _is_login_like(self, resp) -> bool:
+        if resp is None:
+            return False
+        location = resp.headers.get("Location", "").lower()
+        if any(path in location for path in ["/login", "/signin", "/auth", "/account/login"]):
+            return True
+        body = (resp.text or "").lower()
+        # Heuristic: login pages usually mention password + sign in
+        if "password" in body and any(x in body for x in ["sign in", "log in", "login", "forgot"]):
+            return True
+        return False
+
+    def _response_differs(self, baseline, resp) -> bool:
+        if baseline is None or resp is None:
+            return False
+        if baseline.status_code != resp.status_code:
+            return True
+        if len(baseline.content) == 0 or len(resp.content) == 0:
+            return False
+        if hashlib.md5(baseline.content).hexdigest() != hashlib.md5(resp.content).hexdigest():
+            # Require a meaningful size difference to avoid tiny HTML variations
+            return abs(len(baseline.content) - len(resp.content)) > 200
+        return False
+
     def _discover_oauth_endpoints(self, domain: str) -> Dict:
         """Discover OAuth endpoints and configuration"""
         oauth_info = {
@@ -218,7 +242,15 @@ class AuthBypass(TechniqueScanner):
             # Check if redirect was accepted (302 to our URI) or reflected
             if resp.status_code == 302:
                 location = resp.headers.get('Location', '')
-                if 'evil.com' in location or test_redirect in location:
+                if location:
+                    try:
+                        resolved = urlparse(location if "://" in location else f"https://{location.lstrip('/')}")
+                        dest_host = resolved.netloc.split("@")[-1].split(":")[0].lower()
+                    except Exception:
+                        dest_host = ""
+                else:
+                    dest_host = ""
+                if dest_host.endswith("evil.com"):
                     findings.append({
                         "bypass_type": "redirect_uri_bypass",
                         "pattern": bypass_pattern,
@@ -226,15 +258,6 @@ class AuthBypass(TechniqueScanner):
                         "response_location": location,
                         "evidence": f"Redirect URI bypass accepted: {test_redirect}"
                     })
-
-            # Check for reflection without validation
-            elif resp.status_code == 200 and test_redirect in resp.text:
-                findings.append({
-                    "bypass_type": "redirect_uri_reflection",
-                    "pattern": bypass_pattern,
-                    "test_uri": test_redirect,
-                    "evidence": f"Redirect URI reflected without proper validation"
-                })
 
         return findings
 
@@ -259,13 +282,17 @@ class AuthBypass(TechniqueScanner):
             if baseline_status == 200:
                 continue
 
+            baseline_is_login = self._is_login_like(baseline)
+
             # Test path manipulations
             for original, bypass in self.PATH_BYPASS_PATTERNS:
                 bypass_path = bypass.replace("/admin", protected_path)
                 bypass_url = f"https://{domain}{bypass_path}"
 
                 resp = self.get(bypass_url, allow_redirects=False)
-                if resp and resp.status_code == 200 and resp.status_code != baseline_status:
+                if (resp and resp.status_code == 200 and resp.status_code != baseline_status and
+                        not self._is_login_like(resp) and (baseline_is_login or baseline_status in [401, 403, 302, 307, 308]) and
+                        self._response_differs(baseline, resp)):
                     findings.append({
                         "bypass_type": "path_manipulation",
                         "original_path": protected_path,
@@ -283,7 +310,9 @@ class AuthBypass(TechniqueScanner):
                     test_headers[k] = v.replace("/admin", protected_path) if "/admin" in v else v
 
                 resp = self.get(baseline_url, headers=test_headers, allow_redirects=False)
-                if resp and resp.status_code == 200 and resp.status_code != baseline_status:
+                if (resp and resp.status_code == 200 and resp.status_code != baseline_status and
+                        not self._is_login_like(resp) and (baseline_is_login or baseline_status in [401, 403, 302, 307, 308]) and
+                        self._response_differs(baseline, resp)):
                     findings.append({
                         "bypass_type": "header_bypass",
                         "path": protected_path,
@@ -302,7 +331,9 @@ class AuthBypass(TechniqueScanner):
 
             for override_header in method_override_headers:
                 resp = self.post(baseline_url, headers=override_header, allow_redirects=False)
-                if resp and resp.status_code == 200 and baseline_status != 200:
+                if (resp and resp.status_code == 200 and baseline_status != 200 and
+                        not self._is_login_like(resp) and (baseline_is_login or baseline_status in [401, 403, 302, 307, 308]) and
+                        self._response_differs(baseline, resp)):
                     findings.append({
                         "bypass_type": "method_override",
                         "path": protected_path,
@@ -314,116 +345,19 @@ class AuthBypass(TechniqueScanner):
 
     def _test_idor_patterns(self, domain: str) -> List[Dict]:
         """Test for basic IDOR patterns"""
-        findings = []
-
-        # Common IDOR endpoints
-        idor_patterns = [
-            "/api/users/{id}",
-            "/api/user/{id}",
-            "/api/account/{id}",
-            "/api/profile/{id}",
-            "/api/orders/{id}",
-            "/api/documents/{id}",
-            "/users/{id}",
-            "/user/{id}/profile",
-            "/download/{id}",
-            "/file/{id}",
-        ]
-
-        for pattern in idor_patterns[:5]:  # Limit to first 5 for efficiency
-            if is_shutdown():
-                break
-
-            # Test with ID 1 (common admin/first user)
-            test_path = pattern.replace("{id}", "1")
-            url = f"https://{domain}{test_path}"
-
-            resp = self.get(url, allow_redirects=False)
-            if resp and resp.status_code == 200:
-                # Check if response contains user data indicators
-                content = resp.text.lower()
-                indicators = ['email', 'username', 'phone', 'address', 'name']
-
-                for indicator in indicators:
-                    if indicator in content:
-                        findings.append({
-                            "endpoint": test_path,
-                            "id_tested": "1",
-                            "status": resp.status_code,
-                            "indicator": indicator,
-                            "evidence": f"IDOR endpoint found: {test_path} - contains '{indicator}'"
-                        })
-                        break
-
-        return findings
+        # Disabled: IDOR requires authenticated context and data ownership checks.
+        # Automated detection without session context produces false positives.
+        return []
 
     def _test_jwt_vulnerabilities(self, domain: str) -> List[Dict]:
         """Check for JWT-related vulnerabilities in authentication"""
-        findings = []
-
-        # Check common auth endpoints for JWT usage
-        auth_endpoints = ["/api/login", "/auth/login", "/login", "/api/auth"]
-
-        for endpoint in auth_endpoints:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-            resp = self.get(url, allow_redirects=False)
-
-            if resp is None:
-                continue
-
-            # Check response headers for JWT indicators
-            for header_name, header_value in resp.headers.items():
-                if 'eyJ' in str(header_value):  # JWT header starts with base64 of {"
-                    findings.append({
-                        "endpoint": endpoint,
-                        "header": header_name,
-                        "evidence": f"JWT token found in {header_name} header"
-                    })
-
-            # Check for JWT in cookies
-            cookies = resp.headers.get('Set-Cookie', '')
-            if 'eyJ' in cookies:
-                findings.append({
-                    "endpoint": endpoint,
-                    "location": "Set-Cookie",
-                    "evidence": "JWT token set in cookie"
-                })
-
-        return findings
+        # Disabled: presence of JWT is not a vulnerability without weak validation proof.
+        return []
 
     def _test_registration_bypass(self, domain: str) -> List[Dict]:
         """Test for registration/signup bypass vulnerabilities"""
-        findings = []
-
-        # Check for admin registration endpoints
-        admin_register_endpoints = [
-            "/admin/register",
-            "/api/admin/register",
-            "/register?role=admin",
-            "/signup?type=admin",
-            "/api/users/register",
-        ]
-
-        for endpoint in admin_register_endpoints:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-            resp = self.get(url, allow_redirects=False)
-
-            if resp and resp.status_code in [200, 405]:  # 405 = POST only but exists
-                # Check if registration form or API exists
-                if resp.status_code == 200 or 'register' in resp.text.lower():
-                    findings.append({
-                        "endpoint": endpoint,
-                        "status": resp.status_code,
-                        "evidence": f"Potential admin registration endpoint: {endpoint}"
-                    })
-
-        return findings
+        # Disabled: endpoint presence alone is not proof of registration bypass.
+        return []
 
     def scan(self, domain: str, progress: ScanProgress) -> List[Finding]:
         """Scan domain for authentication/authorization bypass vulnerabilities"""
@@ -436,20 +370,6 @@ class AuthBypass(TechniqueScanner):
 
         if oauth_info["endpoints"]:
             self.log(f"Found {len(oauth_info['endpoints'])} OAuth endpoints", "success")
-
-            finding = self.create_finding(
-                domain=domain,
-                severity="info",
-                title="OAuth Endpoints Discovered",
-                description=f"Found {len(oauth_info['endpoints'])} OAuth-related endpoints",
-                evidence=f"Endpoints: {[e['path'] for e in oauth_info['endpoints']]}",
-                reproduction_steps=[
-                    "OAuth endpoints discovered:",
-                    *[f"- {e['path']} (status: {e['status']})" for e in oauth_info['endpoints'][:5]]
-                ]
-            )
-            findings.append(finding)
-            progress.add_finding(domain, finding)
 
             # Test OAuth redirect bypass
             if oauth_info.get("authorization_endpoint"):
@@ -474,23 +394,7 @@ class AuthBypass(TechniqueScanner):
         # Discover SAML endpoints
         if not is_shutdown():
             self.log("Discovering SAML endpoints")
-            saml_endpoints = self._discover_saml_endpoints(domain)
-
-            if saml_endpoints:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="info",
-                    title="SAML Endpoints Discovered",
-                    description="SAML authentication endpoints found - test for signature bypass vulnerabilities",
-                    evidence=f"SAML endpoints: {[e['path'] for e in saml_endpoints]}",
-                    reproduction_steps=[
-                        "SAML endpoints to investigate:",
-                        *[f"- {e['path']} (status: {e['status']})" for e in saml_endpoints[:5]],
-                        "Test for void canonicalization and signature bypass"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
+            self._discover_saml_endpoints(domain)
 
         # Test path-based authorization bypass
         if not is_shutdown():

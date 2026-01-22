@@ -133,127 +133,18 @@ class Deserialization(TechniqueScanner):
 
     def _find_serialized_data(self, domain: str) -> List[Dict]:
         """Find endpoints that use serialized data"""
-        findings = []
-
-        # Check common pages for serialized data in forms/responses
-        pages = ["/", "/login", "/register", "/account", "/api/auth"]
-
-        for page in pages:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{page}"
-            resp = self.get(url, allow_redirects=True)
-
-            if resp is None:
-                continue
-
-            # Check for Java serialized data
-            for sig in self.JAVA_SIGNATURES:
-                if sig in resp.text:
-                    findings.append({
-                        "type": "java_serialized",
-                        "location": page,
-                        "signature": sig,
-                        "evidence": f"Java serialized data found in response ({sig})"
-                    })
-
-            # Check for ViewState (.NET)
-            viewstate_match = re.search(r'__VIEWSTATE.*?value="([^"]+)"', resp.text)
-            if viewstate_match:
-                viewstate = viewstate_match.group(1)
-                findings.append({
-                    "type": "viewstate",
-                    "location": page,
-                    "encrypted": not viewstate.startswith('/w'),
-                    "evidence": f"ViewState found - {'encrypted' if not viewstate.startswith('/w') else 'potentially unprotected'}"
-                })
-
-            # Check for PHP serialized data
-            for sig in self.PHP_SIGNATURES:
-                # Look for base64 that decodes to PHP serialized
-                base64_matches = re.findall(r'[A-Za-z0-9+/=]{20,}', resp.text)
-                for b64 in base64_matches[:10]:  # Limit
-                    try:
-                        decoded = base64.b64decode(b64).decode('utf-8', errors='ignore')
-                        if decoded.startswith(sig):
-                            findings.append({
-                                "type": "php_serialized",
-                                "location": page,
-                                "signature": sig,
-                                "evidence": f"PHP serialized data found (base64 encoded)"
-                            })
-                            break
-                    except:
-                        pass
-
-            # Check cookies for serialized data
-            for cookie_name, cookie_value in resp.cookies.items():
-                # Java serialized in cookie
-                for sig in self.JAVA_SIGNATURES:
-                    if sig in str(cookie_value):
-                        findings.append({
-                            "type": "java_serialized_cookie",
-                            "cookie": cookie_name,
-                            "evidence": f"Java serialized data in cookie: {cookie_name}"
-                        })
-
-        return findings
+        # Disabled: presence of serialized data is not a vulnerability by itself.
+        return []
 
     def _test_viewstate(self, domain: str) -> List[Dict]:
         """Test for ViewState deserialization vulnerabilities"""
-        findings = []
-
-        # Find pages with ViewState
-        pages = ["/", "/login", "/default.aspx", "/home.aspx"]
-
-        for page in pages:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{page}"
-            resp = self.get(url, allow_redirects=True)
-
-            if resp is None:
-                continue
-
-            # Find ViewState
-            viewstate_match = re.search(r'__VIEWSTATE.*?value="([^"]+)"', resp.text)
-            if not viewstate_match:
-                continue
-
-            viewstate = viewstate_match.group(1)
-
-            # Check for MAC validation
-            eventvalidation_match = re.search(r'__EVENTVALIDATION.*?value="([^"]+)"', resp.text)
-
-            # Try to decode ViewState
-            try:
-                decoded = base64.b64decode(viewstate)
-                # Unprotected ViewState typically starts with /w (for unsigned) or doesn't have signature
-                if viewstate.startswith('/w'):
-                    findings.append({
-                        "type": "viewstate_unsigned",
-                        "page": page,
-                        "evidence": "ViewState may be unsigned - potential deserialization target"
-                    })
-
-                # Check for potential YSoSerial.Net indicators
-                if b'\xff\x01' in decoded or b'\x00\x01' in decoded:
-                    findings.append({
-                        "type": "viewstate_net_serialized",
-                        "page": page,
-                        "evidence": ".NET serialization detected in ViewState"
-                    })
-
-            except:
-                pass
-
-        return findings
+        # Disabled: ViewState indicators alone do not confirm exploitability.
+        return []
 
     def _test_java_deser(self, domain: str) -> List[Dict]:
         """Test for Java deserialization vulnerabilities"""
-        findings = []
+        # Disabled: error messages alone are not confirmation of exploitability.
+        return []
 
         # Common endpoints that might accept serialized Java objects
         endpoints = [
@@ -314,169 +205,23 @@ class Deserialization(TechniqueScanner):
 
     def _test_php_deser(self, domain: str) -> List[Dict]:
         """Test for PHP deserialization vulnerabilities"""
-        findings = []
-
-        # Test endpoints
-        endpoints = ["/api/", "/"]
-
-        # PHP object injection payloads
-        php_payloads = [
-            'O:8:"stdClass":0:{}',
-            'a:1:{i:0;s:4:"test";}',
-            'O:7:"Unknown":0:{}',  # Trigger class not found
-        ]
-
-        for endpoint in endpoints:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-
-            for param in self.DESER_PARAMS[:5]:
-                for payload in php_payloads:
-                    # Test both raw and base64
-                    for encoded in [payload, base64.b64encode(payload.encode()).decode()]:
-                        test_url = f"{url}?{param}={quote(encoded)}"
-                        resp = self.get(test_url)
-
-                        if resp is None:
-                            continue
-
-                        response_text = resp.text.lower()
-
-                        # Check for PHP deserialization errors
-                        for error in self.DESER_ERRORS["php"]:
-                            if error.lower() in response_text:
-                                findings.append({
-                                    "type": "php_deser",
-                                    "endpoint": endpoint,
-                                    "param": param,
-                                    "evidence": f"PHP deserialization indicator: {error}"
-                                })
-                                break
-
-        return findings
+        # Disabled: deserialization errors are not proof of vulnerability.
+        return []
 
     def _test_phar_deser(self, domain: str) -> List[Dict]:
         """Test for phar:// wrapper deserialization"""
-        findings = []
-
-        # Endpoints that might handle files
-        file_endpoints = [
-            ("/api/file", "path"),
-            ("/api/image", "url"),
-            ("/api/upload", "file"),
-            ("/include", "file"),
-            ("/download", "file"),
-        ]
-
-        phar_payloads = [
-            "phar:///tmp/test.phar",
-            "phar://./test.phar",
-            "phar://data:text/plain,test",
-        ]
-
-        for endpoint, param in file_endpoints:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-
-            for payload in phar_payloads:
-                test_url = f"{url}?{param}={quote(payload)}"
-                resp = self.get(test_url)
-
-                if resp is None:
-                    continue
-
-                # Check for phar handling indicators
-                response_text = resp.text.lower()
-                if any(ind in response_text for ind in ["phar", "stream_wrapper", "__wakeup", "__destruct"]):
-                    findings.append({
-                        "type": "phar_wrapper",
-                        "endpoint": endpoint,
-                        "param": param,
-                        "evidence": f"phar:// wrapper may be processed"
-                    })
-
-        return findings
+        # Disabled: phar indicator strings are not proof of deserialization.
+        return []
 
     def _test_node_deser(self, domain: str) -> List[Dict]:
         """Test for Node.js deserialization vulnerabilities"""
-        findings = []
-
-        # Node.js serialization libraries often use these
-        node_payloads = [
-            '{"rce":"_$$ND_FUNC$$_function(){return require(\'child_process\').exec(\'id\')}()"}',
-            '{"__proto__":{"admin":true}}',
-            '{"constructor":{"prototype":{"admin":true}}}',
-        ]
-
-        endpoints = ["/api/", "/api/data", "/webhook"]
-
-        for endpoint in endpoints:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-
-            for payload in node_payloads:
-                resp = self.post(url,
-                                data=payload,
-                                headers={"Content-Type": "application/json"})
-
-                if resp is None:
-                    continue
-
-                # Check for node-serialize indicators
-                if "_$$ND_FUNC$$_" in resp.text or "require(" in resp.text:
-                    findings.append({
-                        "type": "node_deser",
-                        "endpoint": endpoint,
-                        "evidence": "node-serialize style payload may be processed"
-                    })
-
-        return findings
+        # Disabled: response reflection of payload fragments is not proof.
+        return []
 
     def _check_error_responses(self, domain: str) -> List[Dict]:
         """Check various endpoints for deserialization error messages"""
-        findings = []
-
-        # Generate corrupted serialized data to trigger errors
-        test_payloads = [
-            ("java", self.DETECTION_PAYLOADS["java_corrupt"]),
-            ("php", base64.b64encode(b'O:999').decode()),
-            ("python", self.DETECTION_PAYLOADS["python_corrupt"]),
-        ]
-
-        endpoints = ["/api/", "/api/data", "/api/user", "/submit"]
-
-        for endpoint in endpoints:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-
-            for lang, payload in test_payloads:
-                # Test as POST data
-                resp = self.post(url,
-                                data=base64.b64decode(payload) if 'base64' not in payload else payload,
-                                headers={"Content-Type": "application/octet-stream"})
-
-                if resp is None:
-                    continue
-
-                # Check for language-specific errors
-                for error in self.DESER_ERRORS.get(lang, []):
-                    if error.lower() in resp.text.lower():
-                        findings.append({
-                            "type": f"{lang}_deser_error",
-                            "endpoint": endpoint,
-                            "error": error,
-                            "evidence": f"{lang.title()} deserialization error: {error}"
-                        })
-
-        return findings
+        # Disabled: error messages alone are not confirmation.
+        return []
 
     def scan(self, domain: str, progress: ScanProgress) -> List[Finding]:
         """Scan domain for deserialization vulnerabilities"""

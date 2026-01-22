@@ -210,6 +210,12 @@ class ParserXXE(TechniqueScanner):
         findings = []
         url = endpoint["url"]
 
+        # Baseline to avoid false positives
+        baseline_resp = self.post(url,
+                                  data='<?xml version="1.0"?><root>test</root>',
+                                  headers={"Content-Type": "image/svg+xml" if endpoint.get("accepts_svg") else "application/xml"})
+        baseline_text = baseline_resp.text.lower() if baseline_resp and baseline_resp.text else ""
+
         for xxe in self.XXE_PAYLOADS:
             if is_shutdown():
                 break
@@ -231,34 +237,13 @@ class ParserXXE(TechniqueScanner):
             response_text = resp.text.lower()
 
             # Direct detection
-            if xxe["detect"].lower() in response_text:
+            if xxe["detect"] != "error" and xxe["detect"].lower() in response_text and xxe["detect"].lower() not in baseline_text:
                 findings.append({
                     "type": "xxe_confirmed",
                     "name": xxe["name"],
                     "url": url,
                     "payload": xxe["payload"],
                     "evidence": f"XXE payload reflected: {xxe['detect']}"
-                })
-
-            # Error-based detection
-            elif xxe["detect"] == "error" and any(err in response_text for err in
-                ["entity", "dtd", "external", "system", "file://", "parser error"]):
-                findings.append({
-                    "type": "xxe_error",
-                    "name": xxe["name"],
-                    "url": url,
-                    "payload": xxe["payload"],
-                    "evidence": f"XML parser error suggests XXE processing: {resp.text[:200]}"
-                })
-
-            # Timing-based detection (blind XXE indicator)
-            elif resp.elapsed.total_seconds() > 5:
-                findings.append({
-                    "type": "xxe_timing",
-                    "name": xxe["name"],
-                    "url": url,
-                    "payload": xxe["payload"],
-                    "evidence": f"Unusual response time ({resp.elapsed.total_seconds():.1f}s) suggests external entity fetch"
                 })
 
         return findings
@@ -296,33 +281,9 @@ class ParserXXE(TechniqueScanner):
 
     def _test_json_parser_differential(self, domain: str, endpoint: str) -> List[Dict]:
         """Test for JSON parser differential vulnerabilities"""
-        findings = []
-
-        for test in self.JSON_PAYLOADS:
-            if is_shutdown():
-                break
-
-            for payload in test["payloads"]:
-                resp = self.post(endpoint,
-                                data=payload,
-                                headers={"Content-Type": "application/json"})
-
-                if resp is None:
-                    continue
-
-                # Check for successful parsing (not a parse error)
-                if resp.status_code == 200:
-                    findings.append({
-                        "type": "json_parser_quirk",
-                        "name": test["name"],
-                        "url": endpoint,
-                        "payload": payload,
-                        "description": test["description"],
-                        "evidence": f"JSON payload accepted: {test['name']}"
-                    })
-                    break  # Found one that works
-
-        return findings
+        # Disabled: parser differential acceptance alone is not a vulnerability
+        # without demonstrating security impact (e.g., privilege change).
+        return []
 
     def _test_url_parser_differential(self, domain: str) -> List[Dict]:
         """Test for URL parser differential vulnerabilities"""
@@ -369,47 +330,9 @@ class ParserXXE(TechniqueScanner):
 
     def _test_content_type_confusion(self, domain: str) -> List[Dict]:
         """Test for content type confusion/polyglot attacks"""
-        findings = []
-
-        # Polyglot payloads
-        polyglots = [
-            # JSON/JavaScript polyglot
-            {
-                "name": "JSON-JS Polyglot",
-                "data": '{"x":"<script>alert(1)</script>"}',
-                "types": ["application/json", "text/html"]
-            },
-            # XML/HTML polyglot
-            {
-                "name": "XML-HTML Polyglot",
-                "data": '<html><body><!--<?xml version="1.0"?><test></test>--></body></html>',
-                "types": ["application/xml", "text/html"]
-            },
-        ]
-
-        for endpoint in self.CONTENT_ENDPOINTS[:3]:
-            if is_shutdown():
-                break
-
-            url = f"https://{domain}{endpoint}"
-
-            for polyglot in polyglots:
-                for content_type in polyglot["types"]:
-                    resp = self.post(url,
-                                    data=polyglot["data"],
-                                    headers={"Content-Type": content_type})
-
-                    if resp and resp.status_code == 200:
-                        # Check if response varies by content type
-                        findings.append({
-                            "type": "content_type_accepted",
-                            "name": polyglot["name"],
-                            "url": url,
-                            "content_type": content_type,
-                            "evidence": f"Endpoint accepts {content_type} content"
-                        })
-
-        return findings
+        # Disabled: accepting multiple content types is not a vulnerability
+        # without a demonstrated parsing exploit or execution.
+        return []
 
     def _test_path_traversal_parsers(self, domain: str) -> List[Dict]:
         """Test for path traversal via parser differentials"""

@@ -63,6 +63,10 @@ class XSLeaks(TechniqueScanner):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.pii_indicators = [
+            "email", "username", "user_id", "phone", "address",
+            "first_name", "last_name", "ssn", "account", "balance"
+        ]
 
     def _check_etag_variation(self, domain: str) -> List[Dict]:
         """Check for ETag-based information leakage"""
@@ -195,25 +199,19 @@ class XSLeaks(TechniqueScanner):
                 resp_nonexist = self.get(nonexist_url, allow_redirects=False)
 
                 if resp_exist and resp_nonexist:
-                    # Check if response differs (status, length, time)
-                    if resp_exist.status_code != resp_nonexist.status_code:
+                    exist_text = (resp_exist.text or "").lower()
+                    nonexist_text = (resp_nonexist.text or "").lower()
+                    exist_has_pii = any(ind in exist_text for ind in self.pii_indicators)
+                    nonexist_has_pii = any(ind in nonexist_text for ind in self.pii_indicators)
+
+                    if (resp_exist.status_code == 200 and resp_nonexist.status_code in [403, 404] and
+                            exist_has_pii and not nonexist_has_pii):
                         findings.append({
-                            "type": "error_oracle",
+                            "type": "error_oracle_confirmed",
                             "endpoint": endpoint_template,
                             "existing_status": resp_exist.status_code,
                             "nonexistent_status": resp_nonexist.status_code,
-                            "evidence": f"Status code differs: {resp_exist.status_code} vs {resp_nonexist.status_code}"
-                        })
-                        break
-
-                    # Check response length difference
-                    len_diff = abs(len(resp_exist.content) - len(resp_nonexist.content))
-                    if len_diff > 100:
-                        findings.append({
-                            "type": "length_oracle",
-                            "endpoint": endpoint_template,
-                            "length_diff": len_diff,
-                            "evidence": f"Response length differs by {len_diff} bytes"
+                            "evidence": "Existing resource exposes user data while non-existing does not"
                         })
                         break
 
@@ -415,67 +413,6 @@ class XSLeaks(TechniqueScanner):
         findings = []
         self.log(f"Testing XS-Leaks on {domain}")
 
-        # Check ETag variations
-        self.log("Checking ETag-based leaks")
-        etag_findings = self._check_etag_variation(domain)
-
-        for ef in etag_findings:
-            severity = "medium" if ef["type"] == "etag_variation" else "low"
-            finding = self.create_finding(
-                domain=domain,
-                severity=severity,
-                title=f"XS-Leak: {ef['type'].replace('_', ' ').title()}",
-                description=f"ETag header may leak information about resource state",
-                evidence=ef["evidence"],
-                reproduction_steps=[
-                    f"Endpoint: {ef['endpoint']}",
-                    "Compare ETag headers across different sessions/states"
-                ]
-            )
-            findings.append(finding)
-            progress.add_finding(domain, finding)
-
-        # Check timing oracles
-        if not is_shutdown():
-            self.log("Checking timing oracles")
-            timing_findings = self._check_timing_oracle(domain)
-
-            for tf in timing_findings:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="medium",
-                    title="XS-Leak: Timing Oracle",
-                    description="Response timing varies significantly - potential timing-based oracle",
-                    evidence=tf["evidence"],
-                    reproduction_steps=[
-                        f"Endpoint: {tf['endpoint']}",
-                        f"Average time: {tf['avg_time']:.3f}s",
-                        f"Variance: {tf['variance']:.3f}"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
-        # Check content length variations
-        if not is_shutdown():
-            self.log("Checking content length oracles")
-            length_findings = self._check_content_length_oracle(domain)
-
-            for lf in length_findings:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="low",
-                    title="XS-Leak: Content Length Variation",
-                    description="Response length varies - may leak state information",
-                    evidence=lf["evidence"],
-                    reproduction_steps=[
-                        f"Endpoint: {lf['endpoint']}",
-                        f"Lengths observed: {lf['lengths']}"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
         # Check error oracles
         if not is_shutdown():
             self.log("Checking error-based oracles")
@@ -484,114 +421,13 @@ class XSLeaks(TechniqueScanner):
             for erf in error_findings:
                 finding = self.create_finding(
                     domain=domain,
-                    severity="medium",
-                    title=f"XS-Leak: {erf['type'].replace('_', ' ').title()}",
-                    description="Endpoint reveals resource existence via error responses",
+                    severity="high",
+                    title="XS-Leak: Confirmed Resource Oracle",
+                    description="Endpoint reveals sensitive resource existence with data exposure",
                     evidence=erf["evidence"],
                     reproduction_steps=[
                         f"Endpoint template: {erf['endpoint']}",
                         "Compare responses for existing vs non-existing resources"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
-        # Check frame counting
-        if not is_shutdown():
-            self.log("Checking frame counting potential")
-            frame_result = self._check_frame_counting(domain)
-
-            if frame_result.get("frameable"):
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="low",
-                    title="XS-Leak: Frame Counting Possible",
-                    description="Page can be framed - frame counting attacks possible",
-                    evidence=frame_result["evidence"],
-                    reproduction_steps=[
-                        "Page lacks X-Frame-Options or CSP frame-ancestors",
-                        "Can count iframes to detect state changes"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
-        # Check COOP/COEP/CORP
-        if not is_shutdown():
-            self.log("Checking cross-origin isolation headers")
-            coop_result = self._check_coop_coep(domain)
-
-            if coop_result.get("missing"):
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="low",
-                    title="Missing Cross-Origin Isolation Headers",
-                    description=f"Missing: {', '.join(coop_result['missing'])}",
-                    evidence=coop_result["evidence"],
-                    reproduction_steps=[
-                        "Check response headers for COOP, COEP, CORP",
-                        "Missing headers may enable XS-Leak attacks"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
-        # Check redirect oracles
-        if not is_shutdown():
-            self.log("Checking redirect-based oracles")
-            redirect_findings = self._check_redirect_oracle(domain)
-
-            for rf in redirect_findings:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="low",
-                    title="XS-Leak: Redirect Oracle",
-                    description="Endpoint redirects - can detect auth state via redirect detection",
-                    evidence=rf["evidence"],
-                    reproduction_steps=[
-                        f"Endpoint: {rf['endpoint']}",
-                        f"Redirects to: {rf['redirect_to']}"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
-        # Check search oracles
-        if not is_shutdown():
-            self.log("Checking search-based oracles")
-            search_findings = self._check_search_oracle(domain)
-
-            for sf in search_findings:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="medium",
-                    title=f"XS-Leak: {sf['type'].replace('_', ' ').title()}",
-                    description="Search endpoint reveals information via timing/length",
-                    evidence=sf["evidence"],
-                    reproduction_steps=[
-                        f"Endpoint: {sf['endpoint']}",
-                        "Compare search results for different queries"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
-        # Check cache timing
-        if not is_shutdown():
-            self.log("Checking cache timing oracles")
-            cache_findings = self._check_cache_timing(domain)
-
-            for cf in cache_findings:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="low",
-                    title="XS-Leak: Cache Timing Oracle",
-                    description="Resource caching creates detectable timing difference",
-                    evidence=cf["evidence"],
-                    reproduction_steps=[
-                        f"Resource: {cf['resource']}",
-                        f"Cold cache: {cf['cold_time']:.3f}s",
-                        f"Warm cache: {cf['warm_time']:.3f}s"
                     ]
                 )
                 findings.append(finding)

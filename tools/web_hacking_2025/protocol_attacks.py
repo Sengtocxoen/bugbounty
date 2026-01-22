@@ -133,25 +133,6 @@ class ProtocolAttacks(TechniqueScanner):
                     "status": 101,
                     "evidence": f"WebSocket endpoint found: {endpoint}"
                 })
-            elif resp.status_code in [200, 400] and 'websocket' in resp.text.lower():
-                findings.append({
-                    "type": "websocket_possible",
-                    "endpoint": endpoint,
-                    "status": resp.status_code,
-                    "evidence": f"Possible WebSocket endpoint: {endpoint}"
-                })
-
-            # Check for Socket.IO
-            if 'socket.io' in endpoint.lower():
-                socketio_url = f"https://{domain}{endpoint}?EIO=4&transport=polling"
-                resp_sio = self.get(socketio_url)
-
-                if resp_sio and resp_sio.status_code == 200:
-                    findings.append({
-                        "type": "socketio_endpoint",
-                        "endpoint": endpoint,
-                        "evidence": f"Socket.IO endpoint found"
-                    })
 
         return findings
 
@@ -171,7 +152,7 @@ class ProtocolAttacks(TechniqueScanner):
 
         resp = self.get(url, headers=headers, allow_redirects=False)
 
-        if resp and resp.status_code == 101:
+        if resp and resp.status_code == 101 and resp.headers.get("Sec-WebSocket-Accept"):
             findings.append({
                 "type": "cswsh_no_origin",
                 "endpoint": endpoint,
@@ -182,7 +163,7 @@ class ProtocolAttacks(TechniqueScanner):
         headers["Origin"] = "https://evil.com"
         resp = self.get(url, headers=headers, allow_redirects=False)
 
-        if resp and resp.status_code == 101:
+        if resp and resp.status_code == 101 and resp.headers.get("Sec-WebSocket-Accept"):
             findings.append({
                 "type": "cswsh_any_origin",
                 "endpoint": endpoint,
@@ -218,64 +199,16 @@ class ProtocolAttacks(TechniqueScanner):
                         types = schema.get('types', [])
 
                         findings.append({
-                            "type": "graphql_introspection",
+                            "type": "graphql_endpoint",
                             "endpoint": endpoint,
                             "types_count": len(types),
-                            "evidence": f"GraphQL introspection enabled - {len(types)} types exposed"
+                            "evidence": f"GraphQL endpoint detected"
                         })
 
                         # Look for sensitive types
                         sensitive_types = ['User', 'Admin', 'Account', 'Password', 'Token', 'Secret', 'Key']
                         found_sensitive = [t['name'] for t in types if any(s.lower() in t.get('name', '').lower() for s in sensitive_types)]
 
-                        if found_sensitive:
-                            findings.append({
-                                "type": "graphql_sensitive_types",
-                                "endpoint": endpoint,
-                                "types": found_sensitive[:10],
-                                "evidence": f"Sensitive types exposed: {found_sensitive[:5]}"
-                            })
-
-                except:
-                    pass
-
-            # Test for batching attack
-            batch_payload = [{"query": "{ __typename }"}, {"query": "{ __typename }"}]
-            resp_batch = self.post(url,
-                                   json=batch_payload,
-                                   headers={"Content-Type": "application/json"})
-
-            if resp_batch and resp_batch.status_code == 200:
-                try:
-                    data = resp_batch.json()
-                    if isinstance(data, list) and len(data) == 2:
-                        findings.append({
-                            "type": "graphql_batching",
-                            "endpoint": endpoint,
-                            "evidence": "GraphQL batching enabled - potential for DoS or bypass"
-                        })
-                except:
-                    pass
-
-            # Test field suggestion (error-based enumeration)
-            typo_query = {"query": "{ userr { id } }"}  # Intentional typo
-            resp_typo = self.post(url,
-                                  json=typo_query,
-                                  headers={"Content-Type": "application/json"})
-
-            if resp_typo and resp_typo.status_code == 200:
-                try:
-                    data = resp_typo.json()
-                    errors = data.get('errors', [])
-                    for error in errors:
-                        msg = str(error.get('message', '')).lower()
-                        if 'did you mean' in msg or 'suggestion' in msg:
-                            findings.append({
-                                "type": "graphql_field_suggestion",
-                                "endpoint": endpoint,
-                                "evidence": "GraphQL field suggestions enabled - schema enumeration possible"
-                            })
-                            break
                 except:
                     pass
 
@@ -285,6 +218,9 @@ class ProtocolAttacks(TechniqueScanner):
         """Test GraphQL endpoint for injection vulnerabilities"""
         findings = []
         url = f"https://{domain}{endpoint}"
+
+        baseline_resp = self.post(url, json={"query": "{ __typename }"}, headers={"Content-Type": "application/json"})
+        baseline_text = baseline_resp.text.lower() if baseline_resp and baseline_resp.text else ""
 
         # SQL injection via GraphQL variables
         sqli_payloads = [
@@ -307,39 +243,13 @@ class ProtocolAttacks(TechniqueScanner):
 
             # Check for SQL errors
             sql_errors = ['sql', 'syntax', 'mysql', 'postgres', 'sqlite', 'oracle']
-            if any(err in response_lower for err in sql_errors):
+            if any(err in response_lower for err in sql_errors) and not any(err in baseline_text for err in sql_errors):
                 findings.append({
                     "type": "graphql_sqli",
                     "endpoint": endpoint,
                     "payload": str(payload),
                     "evidence": "SQL error in GraphQL response - potential SQLi"
                 })
-
-        # NoSQL injection
-        nosql_payloads = [
-            {"query": '{ users(filter: "{\\"$gt\\": \\"\\"}" ) { id } }'},
-            {"query": "{ users(where: { id_not: null }) { id } }"},
-        ]
-
-        for payload in nosql_payloads:
-            if is_shutdown():
-                break
-
-            resp = self.post(url,
-                            json=payload,
-                            headers={"Content-Type": "application/json"})
-
-            if resp and resp.status_code == 200:
-                try:
-                    data = resp.json()
-                    if 'data' in data and data['data']:
-                        findings.append({
-                            "type": "graphql_nosql_indicator",
-                            "endpoint": endpoint,
-                            "evidence": "NoSQL-style query may be processed"
-                        })
-                except:
-                    pass
 
         return findings
 
@@ -488,7 +398,7 @@ class ProtocolAttacks(TechniqueScanner):
                 acao = resp.headers.get('Access-Control-Allow-Origin', '')
                 acac = resp.headers.get('Access-Control-Allow-Credentials', '')
 
-                if origin == "https://evil.com" and acao == origin:
+                if origin == "https://evil.com" and acao == origin and acac.lower() == 'true':
                     findings.append({
                         "type": "cors_reflection",
                         "endpoint": endpoint,
@@ -497,7 +407,7 @@ class ProtocolAttacks(TechniqueScanner):
                         "evidence": f"CORS reflects arbitrary origin: {origin}"
                     })
 
-                if origin == "null" and acao == "null":
+                if origin == "null" and acao == "null" and acac.lower() == 'true':
                     findings.append({
                         "type": "cors_null_origin",
                         "endpoint": endpoint,
@@ -516,19 +426,6 @@ class ProtocolAttacks(TechniqueScanner):
         ws_findings = self._check_websocket_support(domain)
 
         for wf in ws_findings:
-            finding = self.create_finding(
-                domain=domain,
-                severity="info",
-                title=f"WebSocket: {wf['type'].replace('_', ' ').title()}",
-                description=f"WebSocket endpoint detected",
-                evidence=wf["evidence"],
-                reproduction_steps=[
-                    f"Endpoint: {wf['endpoint']}"
-                ]
-            )
-            findings.append(finding)
-            progress.add_finding(domain, finding)
-
             # Test for CSWSH
             if wf["type"] == "websocket_endpoint":
                 cswsh_findings = self._test_websocket_csrf(domain, wf["endpoint"])
@@ -554,29 +451,8 @@ class ProtocolAttacks(TechniqueScanner):
             gql_findings = self._check_graphql(domain)
 
             for gf in gql_findings:
-                severity_map = {
-                    "graphql_introspection": "medium",
-                    "graphql_sensitive_types": "high",
-                    "graphql_batching": "low",
-                    "graphql_field_suggestion": "low",
-                }
-                severity = severity_map.get(gf["type"], "info")
-
-                finding = self.create_finding(
-                    domain=domain,
-                    severity=severity,
-                    title=f"GraphQL: {gf['type'].replace('_', ' ').title()}",
-                    description=gf["evidence"],
-                    evidence=gf["evidence"],
-                    reproduction_steps=[
-                        f"Endpoint: {gf['endpoint']}"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
                 # Test injection on GraphQL endpoints
-                if gf["type"] == "graphql_introspection":
+                if gf["type"] == "graphql_endpoint":
                     inj_findings = self._test_graphql_injection(domain, gf["endpoint"])
 
                     for inf in inj_findings:
@@ -593,75 +469,6 @@ class ProtocolAttacks(TechniqueScanner):
                         )
                         findings.append(finding)
                         progress.add_finding(domain, finding)
-
-        # Check HTTP/2
-        if not is_shutdown():
-            self.log("Checking HTTP/2 support")
-            h2_result = self._check_http2(domain)
-
-            if h2_result["http2_supported"]:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="info",
-                    title="HTTP/2 Supported",
-                    description=f"Target supports HTTP/2",
-                    evidence=f"ALPN: {h2_result['alpn_protocols']}",
-                    reproduction_steps=[
-                        "HTTP/2 negotiated via ALPN"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
-                for issue in h2_result["issues"]:
-                    finding = self.create_finding(
-                        domain=domain,
-                        severity="low",
-                        title=f"HTTP/2 Issue: {issue}",
-                        description=issue,
-                        evidence=issue,
-                        reproduction_steps=["Check security headers for HTTP/2"]
-                    )
-                    findings.append(finding)
-                    progress.add_finding(domain, finding)
-
-        # Check gRPC
-        if not is_shutdown():
-            self.log("Checking gRPC endpoints")
-            grpc_findings = self._check_grpc(domain)
-
-            for grf in grpc_findings:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="info",
-                    title=f"gRPC: {grf['type'].replace('_', ' ').title()}",
-                    description="gRPC endpoint detected",
-                    evidence=grf["evidence"],
-                    reproduction_steps=[
-                        f"Endpoint: {grf['endpoint']}"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
-
-        # Check SSE
-        if not is_shutdown():
-            self.log("Checking Server-Sent Events")
-            sse_findings = self._check_server_sent_events(domain)
-
-            for sf in sse_findings:
-                finding = self.create_finding(
-                    domain=domain,
-                    severity="info",
-                    title="SSE Endpoint Detected",
-                    description="Server-Sent Events endpoint",
-                    evidence=sf["evidence"],
-                    reproduction_steps=[
-                        f"Endpoint: {sf['endpoint']}"
-                    ]
-                )
-                findings.append(finding)
-                progress.add_finding(domain, finding)
 
         # Check CORS for WebSocket/API
         if not is_shutdown():

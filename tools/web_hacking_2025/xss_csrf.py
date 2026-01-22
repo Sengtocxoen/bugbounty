@@ -435,6 +435,22 @@ class CrossSiteAttacks(TechniqueScanner):
 
         base_paths = ["/", "/login", "/logout", "/auth/callback"]
 
+        def _is_external_redirect(location: str, expected_host: str) -> bool:
+            if not location:
+                return False
+            try:
+                resolved = urljoin(f"https://{domain}/", location)
+                parsed = urlparse(resolved)
+                if not parsed.netloc:
+                    return False
+                dest_host = parsed.netloc.split("@")[-1].split(":")[0].lower()
+                # Require a true external redirect (not same domain or subdomain)
+                if dest_host == domain.lower() or dest_host.endswith(f".{domain.lower()}"):
+                    return False
+                return dest_host == expected_host or dest_host.endswith(f".{expected_host}")
+            except Exception:
+                return False
+
         for base_path in base_paths:
             for param in redirect_params[:5]:  # Limit for efficiency
                 for evil_url in evil_urls[:3]:
@@ -449,9 +465,7 @@ class CrossSiteAttacks(TechniqueScanner):
 
                     if resp.status_code in [301, 302, 303, 307, 308]:
                         location = resp.headers.get('Location', '')
-
-                        # Check if redirect to evil domain
-                        if 'evil.com' in location or location.startswith(evil_url):
+                        if _is_external_redirect(location, "evil.com"):
                             findings.append({
                                 "url": test_url,
                                 "parameter": param,
