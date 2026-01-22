@@ -273,10 +273,35 @@ class SSRFDetection(TechniqueScanner):
             if resp is None:
                 continue
 
-            # Check for metadata indicators
+            # Strong evidence gating for cloud metadata
+            # 1. Check Content-Type - metadata returns text/plain or JSON, NOT text/html
+            content_type = resp.headers.get('Content-Type', '').lower()
+            is_html_page = 'text/html' in content_type or '<html' in resp.text.lower()[:500]
+
+            # If response is HTML, it's almost certainly a normal web page, not metadata
+            if is_html_page:
+                continue
+
+            # 2. Check response structure matches expected metadata format
             response_text = resp.text.lower()
+
+            # Count how many indicators are present
+            indicators_found = []
             for indicator in metadata["indicators"]:
                 if indicator.lower() in response_text:
+                    indicators_found.append(indicator)
+
+            # 3. Require multiple indicators AND non-HTML response for high confidence
+            if len(indicators_found) >= 2 and not is_html_page:
+                # Additional validation: check response looks like actual metadata
+                # AWS metadata is newline-separated, GCP/Azure are JSON
+                looks_like_metadata = (
+                    ('json' in content_type and ('{' in resp.text or '[' in resp.text)) or
+                    ('text/plain' in content_type) or
+                    (resp.text.strip().count('\n') > 2 and '<' not in resp.text[:100])  # Multi-line text without HTML
+                )
+
+                if looks_like_metadata:
                     findings.append({
                         "type": "cloud_metadata",
                         "cloud": metadata["name"],
@@ -284,9 +309,8 @@ class SSRFDetection(TechniqueScanner):
                         "endpoint": url,
                         "method": method,
                         "response_obj": resp,
-                        "evidence": f"Cloud metadata accessible: {metadata['name']} - found '{indicator}'"
+                        "evidence": f"Cloud metadata accessible: {metadata['name']} - found indicators: {indicators_found}"
                     })
-                    break
 
         return findings
 
@@ -323,33 +347,52 @@ class SSRFDetection(TechniqueScanner):
             if resp is None:
                 continue
 
-            # Check for different response indicating internal access
-            resp_len = len(resp.text)
-            resp_time = resp.elapsed.total_seconds()
+            # Check response content for internal access indicators
+            resp_text = resp.text.lower()
+            content_type = resp.headers.get('Content-Type', '').lower()
+            is_html_page = 'text/html' in content_type or '<html' in resp_text[:500]
 
-            # Significant length difference might indicate SSRF
-            if abs(resp_len - baseline_len) > 500 and resp.status_code == 200:
+            # IMPORTANT: Length difference alone is NOT sufficient evidence
+            # We need actual internal content indicators
+
+            # Strong indicators of actual internal access (not just any HTML page)
+            internal_indicators = []
+
+            # Check for actual internal service responses
+            if 'nginx' in resp_text[:200] and 'welcome to nginx' in resp_text.lower():
+                internal_indicators.append("nginx_default_page")
+            if 'apache' in resp_text[:500] and ('it works' in resp_text.lower() or 'test page' in resp_text.lower()):
+                internal_indicators.append("apache_default_page")
+            if 'directory listing' in resp_text.lower() or 'index of /' in resp_text.lower():
+                internal_indicators.append("directory_listing")
+
+            # Check for service-specific responses (non-HTML)
+            if not is_html_page:
+                if 'redis_version' in resp_text or 'connected_clients' in resp_text:
+                    internal_indicators.append("redis_service")
+                if 'mongodb' in resp_text.lower() and 'errmsg' in resp_text.lower():
+                    internal_indicators.append("mongodb_service")
+                if 'elasticsearch' in resp_text.lower() or '"cluster_name"' in resp_text:
+                    internal_indicators.append("elasticsearch_service")
+                if 'postgresql' in resp_text.lower() or 'pgadmin' in resp_text.lower():
+                    internal_indicators.append("postgresql_service")
+
+            # Only report if we have concrete internal content evidence
+            if internal_indicators:
                 findings.append({
                     "type": "internal_access",
                     "target": target,
                     "endpoint": url,
                     "method": method,
                     "response_obj": resp,
-                    "response_diff": resp_len - baseline_len,
-                    "evidence": f"Response length differs for internal target: {resp_len} vs baseline {baseline_len}"
+                    "internal_indicators": internal_indicators,
+                    "evidence": f"Internal service access detected: {', '.join(internal_indicators)}"
                 })
 
-            # Timing difference (internal might be faster or slower)
-            if abs(resp_time - baseline_time) > 2:
-                findings.append({
-                    "type": "timing_anomaly",
-                    "target": target,
-                    "endpoint": url,
-                    "method": method,
-                    "response_obj": resp,
-                    "time_diff": resp_time - baseline_time,
-                    "evidence": f"Timing anomaly for {target}: {resp_time:.2f}s vs {baseline_time:.2f}s"
-                })
+            # Timing anomalies: only report SIGNIFICANT timing differences (>5s) with multiple confirmations
+            # Single timing differences can be caused by network variance
+            resp_time = resp.elapsed.total_seconds()
+            # Note: Removed weak timing-only detection - timing alone is not reliable SSRF evidence
 
         return findings
 
@@ -421,11 +464,45 @@ class SSRFDetection(TechniqueScanner):
             if resp is None:
                 continue
 
-            # Check if bypass worked (response differs from blocked)
-            if resp.status_code == 200 and len(resp.text) > 100:
-                # Check for localhost indicators
+            # STRONG EVIDENCE REQUIRED for bypass detection
+            # Just finding "localhost" or "admin" in an HTML page is NOT evidence
+            # Normal retail sites contain these words in their pages
+
+            content_type = resp.headers.get('Content-Type', '').lower()
+            is_html_page = 'text/html' in content_type or '<html' in resp.text.lower()[:500]
+
+            # If response is a normal HTML page, it's likely just the target site's error/default page
+            # We need evidence of actual internal content access
+
+            if resp.status_code == 200:
                 response_lower = resp.text.lower()
-                if any(ind in response_lower for ind in ["localhost", "127.0.0.1", "internal", "admin"]):
+
+                # Only flag if response is NOT an HTML page AND contains internal indicators
+                # OR if we see very specific internal service signatures
+                bypass_evidence = []
+
+                if not is_html_page:
+                    # Non-HTML responses with internal data are more credible
+                    if 'root:' in response_lower or 'bin/' in response_lower:
+                        bypass_evidence.append("file_content")
+                    if 'redis_version' in response_lower:
+                        bypass_evidence.append("redis_access")
+                    if '"cluster_name"' in resp.text or '"elasticsearch"' in response_lower:
+                        bypass_evidence.append("elasticsearch_access")
+                    if any(ind in response_lower for ind in ['ami-id', 'instance-id', 'meta-data']):
+                        bypass_evidence.append("metadata_access")
+
+                # For HTML responses, only flag if we see default server pages
+                # (not just because the page mentions "localhost" in text)
+                if is_html_page:
+                    if 'welcome to nginx' in response_lower and 'nginx' in response_lower[:500]:
+                        bypass_evidence.append("nginx_default")
+                    if 'apache' in response_lower[:500] and 'it works' in response_lower:
+                        bypass_evidence.append("apache_default")
+                    if 'directory listing' in response_lower or 'index of /' in response_lower:
+                        bypass_evidence.append("directory_listing")
+
+                if bypass_evidence:
                     findings.append({
                         "type": "bypass_success",
                         "bypass_type": bypass_type,
@@ -433,7 +510,7 @@ class SSRFDetection(TechniqueScanner):
                         "endpoint": url,
                         "method": method,
                         "response_obj": resp,
-                        "evidence": f"SSRF bypass using {bypass_type}: {bypass}"
+                        "evidence": f"SSRF bypass via {bypass_type}: {', '.join(bypass_evidence)}"
                     })
 
         return findings
