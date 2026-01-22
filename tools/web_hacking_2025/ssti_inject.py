@@ -238,6 +238,61 @@ class SSTIInjection(TechniqueScanner):
         """Generate unique canary for detection"""
         return 'ssti' + ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
 
+    def _validate_ssti_evidence(self, response_text: str, expected: str) -> bool:
+        """Validate SSTI evidence - ensure expected output is from template evaluation, not false positive.
+
+        Returns True if the evidence appears genuine, False if it's likely a false positive.
+        """
+        if expected not in response_text:
+            return False
+
+        # For numeric results like "49" (from 7*7), check context to avoid false positives
+        if expected.isdigit():
+            # Patterns that indicate false positives
+            fp_patterns = [
+                rf'error\s*[:\-]?\s*{expected}',      # error: 49, error-49
+                rf'page\s*{expected}',                 # page 49
+                rf'item\s*{expected}',                 # item 49
+                rf'id["\']?\s*[:=]\s*["\']?{expected}', # id="49", id: 49
+                rf'\.{expected}\.',                    # .49. (version)
+                rf'\d{expected}\d',                    # part of larger number
+                rf'{expected}%',                       # 49% (percentage)
+                rf'\${expected}',                      # $49 (price)
+                rf'£{expected}',                       # £49 (price)
+                rf'€{expected}',                       # €49 (price)
+                rf'¥{expected}',                       # ¥49 (price)
+                rf'{expected}\.99',                    # 49.99 (price)
+                rf'{expected}\.00',                    # 49.00 (price)
+                rf'status["\']?\s*[:=]\s*["\']?{expected}', # status: 49
+                rf'code["\']?\s*[:=]\s*["\']?{expected}',   # code: 49
+            ]
+
+            # Find all occurrences of expected value
+            for match in re.finditer(rf'(?<!\d){re.escape(expected)}(?!\d)', response_text):
+                start = max(0, match.start() - 30)
+                end = min(len(response_text), match.end() + 30)
+                context = response_text[start:end].lower()
+
+                # Check if this occurrence is in a false positive context
+                is_fp = any(re.search(pattern, context, re.IGNORECASE) for pattern in fp_patterns)
+
+                if not is_fp:
+                    # Found an occurrence that's not in a known FP context
+                    # This could be genuine SSTI
+                    return True
+
+            # All occurrences were in FP contexts
+            return False
+
+        # For string results like "TEST", less likely to be FP but still validate
+        elif expected.isupper() and expected.isalpha():
+            # Make sure it's not just in a generic context like navigation/headers
+            if response_text.count(expected) > 5:
+                # If the value appears many times, it's probably a common word/UI element
+                return False
+
+        return True
+
     def _same_domain(self, url: str, domain: str) -> bool:
         try:
             host = urlparse(url).netloc.lower()
@@ -352,22 +407,29 @@ class SSTIInjection(TechniqueScanner):
             if resp is None:
                 continue
 
-            # Check for expected output (and ensure it's not already in baseline)
-            if ssti["expect"] != "error" and ssti["expect"] in resp.text and ssti["expect"] not in baseline_text:
-                reflection_possible = payload in resp.text
-                findings.append({
-                    "type": "ssti_confirmed",
-                    "name": ssti["name"],
-                    "engines": ssti["engines"],
-                    "parameter": param,
-                    "payload": payload,
-                    "method": method,
-                    "url": url,
-                    "response_obj": resp,
-                    "reflection_possible": reflection_possible,
-                    "evidence": f"SSTI output observed: {payload} -> {ssti['expect']}"
-                })
-                break  # Found it, no need to test more
+            # Check for expected output with proper false positive validation
+            # Just finding "49" in a page is NOT proof of SSTI - could be price, page number, etc.
+            if ssti["expect"] != "error":
+                expected = ssti["expect"]
+
+                # Basic check: expected value in response but not in baseline
+                if expected in resp.text and expected not in baseline_text:
+                    # IMPORTANT: Validate evidence to avoid false positives
+                    if self._validate_ssti_evidence(resp.text, expected):
+                        reflection_possible = payload in resp.text
+                        findings.append({
+                            "type": "ssti_confirmed",
+                            "name": ssti["name"],
+                            "engines": ssti["engines"],
+                            "parameter": param,
+                            "payload": payload,
+                            "method": method,
+                            "url": url,
+                            "response_obj": resp,
+                            "reflection_possible": reflection_possible,
+                            "evidence": f"SSTI output observed: {payload} -> {expected} (context validated)"
+                        })
+                        break  # Found it, no need to test more
 
         # Test blind SSTI (error-based)
         for blind in self.BLIND_SSTI_PAYLOADS:
@@ -663,7 +725,15 @@ class SSTIInjection(TechniqueScanner):
         return findings
 
     def _test_prototype_pollution(self, domain: str) -> List[Dict]:
-        """Test for prototype pollution vulnerabilities"""
+        """Test for prototype pollution vulnerabilities
+
+        IMPORTANT: Real prototype pollution detection requires proving that:
+        1. The polluted property affects OTHER objects/requests (not just echoing back our payload)
+        2. OR causes observable behavior changes in the application
+
+        Just seeing our payload in the response is NOT proof of pollution -
+        many APIs simply store and return what you send them.
+        """
         findings = []
 
         # Common API endpoints
@@ -676,9 +746,8 @@ class SSTIInjection(TechniqueScanner):
 
         # Prototype pollution payloads
         pp_payloads = [
-            {"__proto__": {"polluted": "true"}},
-            {"constructor": {"prototype": {"polluted": "true"}}},
-            {"__proto__.polluted": "true"},
+            {"__proto__": {"polluted_pp_test": "true"}},
+            {"constructor": {"prototype": {"polluted_pp_test": "true"}}},
         ]
 
         for endpoint in api_endpoints:
@@ -686,6 +755,18 @@ class SSTIInjection(TechniqueScanner):
                 break
 
             url = f"https://{domain}{endpoint}"
+
+            # First, get a baseline response WITHOUT our payload
+            baseline_resp = self.get(url, headers={"Content-Type": "application/json"})
+            if baseline_resp is None:
+                continue
+
+            baseline_has_polluted = False
+            try:
+                baseline_data = baseline_resp.json()
+                baseline_has_polluted = "polluted_pp_test" in str(baseline_data)
+            except:
+                pass
 
             for payload in pp_payloads:
                 resp = self.post(url,
@@ -695,17 +776,47 @@ class SSTIInjection(TechniqueScanner):
                 if resp is None:
                     continue
 
-                # Check if prototype pollution indicator appears
+                # IMPORTANT: Don't just check if our payload is echoed back
+                # That's not proof of pollution - servers often return what you POST
+
                 if resp.status_code == 200:
                     try:
                         data = resp.json()
-                        if data.get("polluted") == "true":
-                            findings.append({
-                                "type": "prototype_pollution",
-                                "url": url,
-                                "payload": str(payload),
-                                "evidence": "Prototype pollution confirmed: polluted property accessible"
-                            })
+
+                        # Check if our polluted property appears in response
+                        if data.get("polluted_pp_test") == "true":
+                            # This alone is NOT proof - could just be echoing our payload
+
+                            # To confirm real pollution, make a SEPARATE request
+                            # and check if the polluted property persists/propagates
+                            verify_resp = self.get(f"https://{domain}/api/user/profile",
+                                                  headers={"Content-Type": "application/json"})
+                            verify_resp2 = self.get(url,
+                                                   headers={"Content-Type": "application/json"})
+
+                            # Check if pollution propagated to other endpoints
+                            pollution_propagated = False
+                            for vr in [verify_resp, verify_resp2]:
+                                if vr is None:
+                                    continue
+                                try:
+                                    vdata = vr.json()
+                                    # Check if our polluted property appears in a DIFFERENT request
+                                    # where we didn't explicitly send it
+                                    if "polluted_pp_test" in str(vdata) and not baseline_has_polluted:
+                                        pollution_propagated = True
+                                        break
+                                except:
+                                    pass
+
+                            if pollution_propagated:
+                                findings.append({
+                                    "type": "prototype_pollution",
+                                    "url": url,
+                                    "payload": str(payload),
+                                    "evidence": "Prototype pollution confirmed: polluted property propagated to other requests"
+                                })
+                            # Note: If only echoed back, don't report - that's not real pollution
                     except:
                         pass
 

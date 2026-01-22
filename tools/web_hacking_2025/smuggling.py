@@ -262,56 +262,29 @@ class HTTPSmuggling(TechniqueScanner):
         return None
 
     def _test_te_obfuscation(self, domain: str) -> List[Dict]:
-        """Test various Transfer-Encoding obfuscations"""
-        findings = []
-        host = domain
+        """Test various Transfer-Encoding obfuscations
 
-        baseline_te = "Transfer-Encoding: chunked"
-        baseline_req = (
-            f"POST / HTTP/1.1\r\n"
-            f"Host: {host}\r\n"
-            f"{baseline_te}\r\n"
-            f"Content-Length: 5\r\n"
-            f"\r\n"
-            f"0\r\n\r\n"
-        )
+        IMPORTANT: This method is DISABLED because status code differences alone
+        are NOT valid evidence of HTTP request smuggling. Many servers return
+        400 Bad Request for malformed/obfuscated TE headers as part of normal
+        input validation - this is expected behavior, not a vulnerability.
 
-        baseline_resp, _ = self._raw_request(host, 443, baseline_req.encode(), True)
-        if not baseline_resp:
-            return findings
+        Real smuggling detection requires:
+        - Actual request desync (second request processed differently)
+        - Timing-based detection with significant delays
+        - Reflection of smuggled content in subsequent response
+        - OAST/out-of-band interaction from smuggled request
 
-        baseline_status = self._extract_status(baseline_resp)
+        Status code differences (400 vs 301) just indicate the server rejects
+        malformed headers, which is correct security behavior.
+        """
+        # DISABLED: Status code differences are not valid smuggling evidence
+        return []
 
-        for obfuscation in self.TE_OBFUSCATIONS:
-            if is_shutdown():
-                break
-
-            if obfuscation == baseline_te:
-                continue
-
-            test_req = (
-                f"POST / HTTP/1.1\r\n"
-                f"Host: {host}\r\n"
-                f"{obfuscation}\r\n"
-                f"Content-Length: 5\r\n"
-                f"\r\n"
-                f"0\r\n\r\n"
-            )
-
-            test_resp, _ = self._raw_request(host, 443, test_req.encode(), True)
-            if test_resp:
-                test_status = self._extract_status(test_resp)
-
-                # Different handling indicates potential vulnerability
-                if test_status and baseline_status and test_status != baseline_status:
-                    findings.append({
-                        "obfuscation": obfuscation,
-                        "baseline_status": baseline_status,
-                        "test_status": test_status,
-                        "evidence": f"TE obfuscation handled differently: '{obfuscation}' returned {test_status} vs baseline {baseline_status}"
-                    })
-
-        return findings
+        # Original code preserved for reference but not executed:
+        # findings = []
+        # host = domain
+        # ...status diff detection removed to prevent false positives...
 
     def _test_http2_downgrade(self, domain: str) -> Optional[Dict]:
         """Test for HTTP/2 to HTTP/1.1 downgrade smuggling potential"""
@@ -352,9 +325,19 @@ class HTTPSmuggling(TechniqueScanner):
         self.log(f"Testing HTTP smuggling on {domain}")
 
         # Test standard smuggling payloads
+        # IMPORTANT: Only test payloads with reliable detection methods
+        # Skip "status_diff" - different status codes for malformed headers is NOT
+        # evidence of smuggling (servers correctly reject bad input with 400)
+        valid_detection_methods = ["timeout", "reflection"]
+
         for payload in self.PAYLOADS:
             if is_shutdown():
                 break
+
+            # Skip payloads that rely on status_diff - produces false positives
+            if payload.detection_method not in valid_detection_methods:
+                self.log(f"Skipping {payload.name} - {payload.detection_method} detection unreliable")
+                continue
 
             self.log(f"Testing: {payload.name}")
             result = self._test_smuggling_payload(domain, payload)
