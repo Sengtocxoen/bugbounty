@@ -2,6 +2,26 @@
 
 A comprehensive suite of tools and scripts for bug bounty hunting and security testing.
 
+## Project Status (Jan 2026)
+
+The codebase now combines a classic automation pipeline with the `web_hacking_2025` technique suite and a unified runner (`tools/run_all.py`) to chain deep scans and technique checks. The focus has shifted toward repeatable workflows, safer defaults, and clear output organization.
+
+See `Cursor.md` for a concise history, current focus, and improvement plan.
+
+## Project Focus
+
+- Reliable recon + vulnerability workflows for scoped targets
+- Repeatable, configurable runs with clear output structure
+- Safer defaults to reduce noisy or risky checks
+- Simple entry points (`automation/bugbounty_scanner.py`, `tools/run_all.py`)
+
+## Improvement Areas (High-Level)
+
+- Normalize configuration, logging, and output schemas across tools
+- Reduce duplication between scanners and technique modules
+- Add test coverage for config parsing, runners, and report generation
+- Document usage patterns and safe/authorized scanning practices
+
 ## Features
 
 - Automated vulnerability scanning
