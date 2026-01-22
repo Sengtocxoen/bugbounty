@@ -99,6 +99,21 @@ class Finding:
         lines.append("=" * 80)
         return "\n".join(lines)
 
+    def to_compact_report(self) -> str:
+        """Generate a compact report string for confirmed findings."""
+        lines = [
+            f"{self.title} [{self.severity.upper()}]",
+            f"Domain: {self.domain}",
+            f"Technique: {self.technique}",
+        ]
+        if self.evidence:
+            lines.append(f"Evidence: {self.evidence}")
+        if self.reproduction_steps:
+            lines.append("Steps:")
+            for i, step in enumerate(self.reproduction_steps, 1):
+                lines.append(f"  {i}. {step}")
+        return "\n".join(lines)
+
 
 @dataclass
 class DomainProgress:
@@ -219,6 +234,12 @@ class ScanProgress:
         all_file = findings_dir / "all_findings.txt"
         with open(all_file, "a") as f:
             f.write(finding.to_report() + "\n\n")
+
+        # Write a cleaner, confirmed-only report for bug submissions
+        if is_confirmed_finding(finding):
+            confirmed_file = findings_dir / "confirmed_findings.txt"
+            with open(confirmed_file, "a") as f:
+                f.write(finding.to_compact_report() + "\n\n")
 
     def save(self):
         """Save complete progress state"""
@@ -585,3 +606,17 @@ def setup_signal_handlers():
 def is_shutdown() -> bool:
     """Check if shutdown was requested"""
     return SHUTDOWN_FLAG
+
+
+def is_confirmed_finding(finding: Finding) -> bool:
+    """Return True if a finding is strong enough for report-ready output."""
+    # Only include meaningful severities
+    if finding.severity.lower() in {"info", "low"}:
+        return False
+    confidence = str(finding.metadata.get("confidence", "")).lower()
+    evidence_type = str(finding.metadata.get("evidence_type", "")).lower()
+    if confidence == "low":
+        return False
+    if evidence_type in {"indicator", "reflection", "heuristic"}:
+        return False
+    return True
