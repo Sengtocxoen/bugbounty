@@ -8,6 +8,59 @@ The codebase now combines a classic automation pipeline with the `web_hacking_20
 
 See `Cursor.md` for a concise history, current focus, and improvement plan.
 
+---
+
+## Project Organization
+
+### Phase-Based Bug Bounty Workflow
+
+The project is organized around four phases of bug bounty hunting:
+
+```
+Phase 1: Reconnaissance  →  Phase 2: Analysis  →  Phase 3: Exploitation  →  Phase 4: Reporting
+```
+
+| Phase | Focus | Documentation |
+|-------|-------|---------------|
+| **1. Reconnaissance** | Asset discovery, subdomain enum, tech stack | [Phase 1 Guide](Phases/Phase1_Reconnaissance.md) |
+| **2. Analysis** | Attack surface mapping, entry points | [Phase 2 Guide](Phases/Phase2_Analysis.md) |
+| **3. Exploitation** | Vulnerability testing, PoC development | [Phase 3 Guide](Phases/Phase3_Exploitation.md) |
+| **4. Reporting** | Documentation, submission, follow-up | [Phase 4 Guide](Phases/Phase4_Reporting.md) |
+
+See [Phases/README.md](Phases/README.md) for complete workflow documentation.
+
+### Key Vulnerability Types
+
+Focus testing on these high-impact vulnerability categories ([full guide](Vulnerabilities_That_Matter.md)):
+
+1. **IDOR** - Insecure Direct Object Reference
+2. **SSRF** - Server-Side Request Forgery
+3. **Subdomain Takeovers** - Abandoned service configurations
+4. **Exposed Files/Secrets** - Leaked credentials and sensitive files
+5. **Business Logic Flaws** - Workflow exploitation
+6. **0-Day/Novel Misconfigurations** - Recently disclosed vulnerabilities
+
+### Directory Structure
+
+```
+bugbounty/
+├── Phases/                    # Phase-based methodology guides
+│   ├── README.md              # Workflow overview
+│   ├── Phase1_Reconnaissance.md
+│   ├── Phase2_Analysis.md
+│   ├── Phase3_Exploitation.md
+│   └── Phase4_Reporting.md
+├── Vulnerabilities_That_Matter.md  # Key vulnerability types (Wiz methodology)
+├── Amazon/                    # Amazon VRP resources
+├── Shopify/                   # Shopify program resources
+├── automation/                # Classic automation pipeline
+├── tools/                     # Modern scanning suite
+├── workflows/                 # Manual verification guides
+└── templates/                 # Report templates
+```
+
+---
+
 ## Project Focus
 
 - Reliable recon + vulnerability workflows for scoped targets
