@@ -5,10 +5,12 @@ Unified runner to execute the full pipeline in one command.
 This script combines:
   1) Deep scan (recon + discovery + fuzzing)
   2) Web Hacking 2025 technique scanner
+  3) Wiz 5-phase reconnaissance (optional, --wiz-recon)
 
 Modes:
   - Sequential (default): Find all subdomains first, then scan each
   - Parallel (--parallel): Scan subdomains AS THEY ARE DISCOVERED
+  - Wiz Recon (--wiz-recon): Use Wiz methodology for reconnaissance
 
 It is designed to be a single "run everything" entry point.
 """
@@ -26,6 +28,7 @@ from deep_scan import DeepScanner, DeepScanConfig
 from web_hacking_2025.scanner import WebHackingScanner, load_domains_from_file
 from web_hacking_2025.bugbounty_config import get_program_config, ScopeValidator
 from parallel_scan import ParallelScanner
+from wiz_recon import WizReconScanner, save_results as save_wiz_results
 
 
 def normalize_domain(value: str) -> str:
@@ -167,6 +170,83 @@ def run_parallel_scan(args: argparse.Namespace):
     return results
 
 
+def run_wiz_recon(args: argparse.Namespace) -> Dict:
+    """Run Wiz 5-phase reconnaissance methodology.
+
+    Based on: https://www.wiz.io/bug-bounty-masterclass/reconnaissance/overview
+
+    Phases:
+      1. Passive subdomain discovery (subfinder + APIs)
+      2. DNS resolution filtering
+      3. Active discovery (brute-force + permutation)
+      4. Root domain discovery (WHOIS, acquisitions)
+      5. Public exposure probing (httpx + ports)
+    """
+    print("\n" + "=" * 70)
+    print("  WIZ RECON MODE: 5-phase reconnaissance methodology")
+    print("  Reference: wiz.io/bug-bounty-masterclass/reconnaissance")
+    print("=" * 70 + "\n")
+
+    # Determine thoroughness
+    if args.wiz_quick:
+        thoroughness = "quick"
+    elif args.wiz_thorough:
+        thoroughness = "thorough"
+    else:
+        thoroughness = "medium"
+
+    # Build skip phases list
+    skip_phases = []
+    if args.skip_subdomains:
+        skip_phases.append("passive")
+    if args.wiz_skip_active:
+        skip_phases.append("active")
+    if args.wiz_skip_root:
+        skip_phases.append("root")
+    if args.skip_ports:
+        skip_phases.append("probing")
+
+    all_results = {}
+
+    for target in args.targets_list:
+        domain = normalize_domain(target)
+        print(f"\n[*] Running Wiz Recon on: {domain}")
+
+        scanner = WizReconScanner(
+            program=args.program,
+            username=args.username,
+            thoroughness=thoroughness
+        )
+
+        result = scanner.scan(domain, skip_phases=skip_phases)
+        all_results[domain] = result
+
+        # Save results
+        if len(args.targets_list) == 1:
+            output_dir = Path(args.output) / domain.replace('.', '_') / "wiz_recon"
+        else:
+            output_dir = Path(args.output) / "wiz_recon" / domain.replace('.', '_')
+
+        save_wiz_results(result, output_dir)
+
+    return all_results
+
+
+def derive_wiz_scan_domains(wiz_results: Dict, args: argparse.Namespace) -> List[str]:
+    """Extract live in-scope domains from Wiz recon results."""
+    discovered = set()
+
+    for domain, result in wiz_results.items():
+        for sub, data in result.all_subdomains.items():
+            if data.is_alive and (data.in_scope or args.program is None):
+                discovered.add(sub)
+
+        if not discovered:
+            discovered.add(domain)
+
+    return sorted(discovered)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Unified runner for deep_scan + web_hacking_2025",
@@ -190,6 +270,18 @@ Examples:
 
   # Parallel mode with 10 workers for faster scanning
   python run_all.py -f targets.txt --parallel --workers 10
+
+  # WIZ RECON MODE: Use Wiz 5-phase reconnaissance methodology
+  python run_all.py example.com --wiz-recon -p amazon -u myh1user
+
+  # Wiz recon with quick mode (smaller wordlist, faster)
+  python run_all.py example.com --wiz-recon --wiz-quick
+
+  # Wiz recon with thorough mode (extensive wordlist)
+  python run_all.py example.com --wiz-recon --wiz-thorough
+
+  # Wiz recon + web techniques scanner on discovered subdomains
+  python run_all.py example.com --wiz-recon --scan-discovered
         """,
     )
 
@@ -231,6 +323,18 @@ Examples:
     parser.add_argument("-w", "--workers", type=int, default=3,
                         help="Number of parallel scanning workers (default: 3, only used with --parallel)")
 
+    # Wiz Recon mode options
+    parser.add_argument("--wiz-recon", action="store_true",
+                        help="Use Wiz 5-phase reconnaissance methodology (replaces deep scan recon)")
+    parser.add_argument("--wiz-quick", action="store_true",
+                        help="Wiz recon: quick mode with smaller wordlist")
+    parser.add_argument("--wiz-thorough", action="store_true",
+                        help="Wiz recon: thorough mode with extensive wordlist")
+    parser.add_argument("--wiz-skip-active", action="store_true",
+                        help="Wiz recon: skip active discovery (brute-force/permutation)")
+    parser.add_argument("--wiz-skip-root", action="store_true",
+                        help="Wiz recon: skip root domain discovery")
+
     args = parser.parse_args()
     args.targets_list = collect_targets(args.target, args.file, args.targets)
 
@@ -241,6 +345,17 @@ Examples:
     if args.parallel:
         # Parallel mode: scan subdomains as they are discovered
         run_parallel_scan(args)
+    elif args.wiz_recon:
+        # Wiz Recon mode: Use Wiz 5-phase methodology
+        wiz_results = run_wiz_recon(args)
+
+        # Run web techniques scan on discovered subdomains
+        if not args.skip_web:
+            if args.scan_discovered:
+                domains = derive_wiz_scan_domains(wiz_results, args)
+            else:
+                domains = [normalize_domain(t) for t in args.targets_list]
+            run_web_scanner(domains, args)
     else:
         # Sequential mode (original behavior)
         # Run deep scan

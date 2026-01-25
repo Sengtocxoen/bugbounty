@@ -4,6 +4,142 @@
 
 This guide provides specific commands and techniques for discovering and mapping targets in both Amazon VRP and Shopify bug bounty programs.
 
+**NEW: Wiz 5-Phase Methodology Integration**
+This repository now includes the Wiz Bug Bounty Masterclass reconnaissance methodology. See the [Wiz Recon Section](#wiz-5-phase-reconnaissance-methodology) for the automated workflow.
+
+---
+
+## WIZ 5-PHASE RECONNAISSANCE METHODOLOGY
+
+Based on: https://www.wiz.io/bug-bounty-masterclass/reconnaissance/overview
+
+### Quick Start (Automated)
+
+```bash
+# Using the integrated Wiz recon module
+cd /home/user/bugbounty/tools
+
+# Basic scan
+python wiz_recon.py example.com
+
+# With bug bounty program settings
+python wiz_recon.py amazon.com -p amazon -u yourh1username
+
+# Quick mode (faster, smaller wordlist)
+python wiz_recon.py example.com --quick
+
+# Thorough mode (extensive wordlist)
+python wiz_recon.py example.com --very-thorough
+
+# Using the unified runner
+python run_all.py example.com --wiz-recon -p amazon -u yourh1username
+
+# Wiz recon + vulnerability scanning on discovered subdomains
+python run_all.py example.com --wiz-recon --scan-discovered
+```
+
+### The 5 Phases
+
+#### Phase 1: Passive Subdomain Discovery
+Queries multiple passive sources without touching the target:
+
+```bash
+# Automated (uses subfinder + 8 APIs)
+python wiz_recon.py example.com
+
+# Manual with subfinder
+subfinder -d example.com -all -o passive-subdomains.txt
+
+# The module queries:
+# - subfinder (60+ sources)
+# - crt.sh (CT logs)
+# - HackerTarget
+# - AlienVault OTX
+# - URLScan.io
+# - RapidDNS
+# - CertSpotter
+# - ThreatCrowd
+# - BufferOver.run
+```
+
+#### Phase 2: DNS Resolution
+Filter non-resolving domains:
+
+```bash
+# Automated via puredns
+cat passive-subdomains.txt | puredns resolve | tee resolved.txt
+
+# Typical result: ~75% of passive subdomains resolve
+# 1600 passive → ~1200 active
+```
+
+#### Phase 3: Active DNS Discovery
+Brute-forcing and permutation:
+
+```bash
+# DNS Brute-force
+puredns bruteforce wordlist.txt example.com -r resolvers.txt -w bruteforce-results.txt
+
+# DNS Permutation with alterx
+cat known-subdomains.txt | alterx | puredns resolve | tee permutations.txt
+
+# Wordlist recommendations:
+# - Quick: ~40 common subdomains
+# - Medium: ~100 subdomains (default)
+# - Thorough: ~300+ subdomains
+```
+
+#### Phase 4: Root Domain Discovery
+Find additional company-owned domains:
+
+```bash
+# Reverse WHOIS (requires API key for full results)
+# Services: whoxy.com, domaintools.com
+
+# Crunchbase acquisitions
+# Check: crunchbase.com/organization/[company]/acquisitions
+
+# GitHub domain mining
+# Search for internal domain references in code
+```
+
+#### Phase 5: Public Exposure Probing
+Extract metadata from live targets:
+
+```bash
+# Using httpx
+cat resolved.txt | httpx -title -status-code -ip -cname -tech-detect -o metadata.txt
+
+# Port scanning for non-HTTP services
+nmap -sV -p 21,22,25,3306,5432,6379,9200,27017 target
+
+# Status Code Actions:
+# 200 - Test immediately
+# 403/404 - Fuzz paths like /admin, /api, /backup
+# 500 - Investigate further
+```
+
+### External Tool Installation
+
+```bash
+# Subfinder
+go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+
+# Puredns
+go install github.com/d3mondev/puredns/v2@latest
+
+# Alterx
+go install github.com/projectdiscovery/alterx/cmd/alterx@latest
+
+# Httpx
+go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+
+# Add to PATH
+export PATH=$PATH:$(go env GOPATH)/bin
+```
+
+**Note:** The wiz_recon.py module includes Python fallbacks when external tools aren't installed.
+
 ---
 
 ## AMAZON VRP - RECONNAISSANCE
