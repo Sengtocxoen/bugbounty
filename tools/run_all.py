@@ -6,6 +6,10 @@ This script combines:
   1) Deep scan (recon + discovery + fuzzing)
   2) Web Hacking 2025 technique scanner
 
+Modes:
+  - Sequential (default): Find all subdomains first, then scan each
+  - Parallel (--parallel): Scan subdomains AS THEY ARE DISCOVERED
+
 It is designed to be a single "run everything" entry point.
 """
 
@@ -21,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from deep_scan import DeepScanner, DeepScanConfig
 from web_hacking_2025.scanner import WebHackingScanner, load_domains_from_file
 from web_hacking_2025.bugbounty_config import get_program_config, ScopeValidator
+from parallel_scan import ParallelScanner
 
 
 def normalize_domain(value: str) -> str:
@@ -129,6 +134,39 @@ def run_web_scanner(domains: List[str], args: argparse.Namespace):
     scanner.run(domains, resume=args.resume)
 
 
+def run_parallel_scan(args: argparse.Namespace):
+    """Run parallel subdomain discovery + vulnerability scanning.
+
+    This mode scans subdomains AS THEY ARE DISCOVERED, rather than
+    waiting for all discovery to complete first.
+    """
+    print("\n" + "=" * 70)
+    print("  PARALLEL MODE: Scanning subdomains as they are discovered")
+    print("=" * 70 + "\n")
+
+    techniques = None
+    if args.techniques:
+        techniques = [t.strip() for t in args.techniques.split(",") if t.strip()]
+
+    skip_phases = {
+        'skip_subdomains': args.skip_subdomains,
+        'skip_recursive': args.skip_recursive,
+    }
+
+    scanner = ParallelScanner(
+        targets=args.targets_list,
+        output_dir=Path(args.output),
+        program=args.program,
+        username=args.username,
+        num_workers=args.workers,
+        techniques=techniques,
+        skip_phases=skip_phases
+    )
+
+    results = scanner.run()
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Unified runner for deep_scan + web_hacking_2025",
@@ -146,6 +184,12 @@ Examples:
 
   # Skip deep scan, run only technique scanner
   python run_all.py example.com --skip-deep
+
+  # PARALLEL MODE: Scan subdomains as they are discovered (recommended)
+  python run_all.py example.com --parallel --workers 5 -p amazon -u myh1user
+
+  # Parallel mode with 10 workers for faster scanning
+  python run_all.py -f targets.txt --parallel --workers 10
         """,
     )
 
@@ -181,21 +225,33 @@ Examples:
     parser.add_argument("--validate-scope", action="store_true", help="Validate scope before technique scan")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose deep scan output")
 
+    # Parallel mode options
+    parser.add_argument("--parallel", action="store_true",
+                        help="Enable parallel mode: scan subdomains as they are discovered")
+    parser.add_argument("-w", "--workers", type=int, default=3,
+                        help="Number of parallel scanning workers (default: 3, only used with --parallel)")
+
     args = parser.parse_args()
     args.targets_list = collect_targets(args.target, args.file, args.targets)
 
     if not args.targets_list:
         parser.error("No targets specified. Use positional target, --targets, or --file.")
 
-    # Run deep scan
-    deep_results = {}
-    if not args.skip_deep:
-        deep_results = run_deep_scan(args)
+    # Check for parallel mode
+    if args.parallel:
+        # Parallel mode: scan subdomains as they are discovered
+        run_parallel_scan(args)
+    else:
+        # Sequential mode (original behavior)
+        # Run deep scan
+        deep_results = {}
+        if not args.skip_deep:
+            deep_results = run_deep_scan(args)
 
-    # Run web techniques scan
-    if not args.skip_web:
-        domains = derive_scan_domains(deep_results, args)
-        run_web_scanner(domains, args)
+        # Run web techniques scan
+        if not args.skip_web:
+            domains = derive_scan_domains(deep_results, args)
+            run_web_scanner(domains, args)
 
 
 if __name__ == "__main__":
