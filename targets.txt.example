@@ -1,0 +1,14 @@
+# Example targets file for continuous scanning
+# Add one domain per line (no http:// or https://)
+
+# Amazon Bug Bounty Program
+# aws.amazon.com
+# console.aws.amazon.com
+
+# Shopify Bug Bounty Program  
+# *.shopify.com
+
+# Your targets here
+# example.com
+# api.example.com
+# admin.example.com
