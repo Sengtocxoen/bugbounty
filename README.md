@@ -52,8 +52,8 @@ python scanner.py intelligent example.com -s subdomains.txt
 # Continuous 24/7 scanning
 python scanner.py continuous -c continuous_config.yaml
 
-# Deep comprehensive scan
-python scanner.py deep example.com -p amazon
+# Deep comprehensive scan (with HackerOne username for Amazon)
+python scanner.py deep amazon.com -p amazon -u yourh1username
 
 # Wiz reconnaissance
 python scanner.py recon example.com --thorough
@@ -298,7 +298,13 @@ sudo systemctl enable bugbounty-scanner
 
 ```bash
 # Full scan on a single target
-python scanner.py deep example.com -p amazon
+python scanner.py deep example.com -p generic
+
+# Amazon program (with HackerOne username for User-Agent)
+python scanner.py deep amazon.com -p amazon -u yourh1username
+
+# Shopify program
+python scanner.py deep shopify.com -p shopify -u yourh1username
 
 # With parallel scanning (faster)
 python scanner.py deep example.com --parallel --workers 10
@@ -478,7 +484,10 @@ python scanner.py intelligent example.com -s subdomains.txt
 python scanner.py continuous -c continuous_config.yaml
 
 # Deep scan
-python scanner.py deep example.com -p amazon
+python scanner.py deep example.com -p generic
+
+# Deep scan with username (for Amazon/Shopify)
+python scanner.py deep amazon.com -p amazon -u yourh1username
 
 # Recon only
 python scanner.py recon example.com

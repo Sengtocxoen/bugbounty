@@ -63,6 +63,8 @@ For more help: python scanner.py <mode> --help
                                    help='Output directory (default: ./results/intelligent)')
     intelligent_parser.add_argument('-w', '--workers', type=int, default=5,
                                    help='Number of parallel workers for deep scan (default: 5)')
+    intelligent_parser.add_argument('-u', '--username', required=False,
+                                   help='HackerOne username (for program-specific User-Agent)')
     intelligent_parser.add_argument('--skip-deep', action='store_true',
                                    help='Skip deep scanning (quick scan only)')
     
@@ -86,7 +88,8 @@ For more help: python scanner.py <mode> --help
     deep_parser.add_argument('target', help='Target domain')
     deep_parser.add_argument('-p', '--program', choices=['amazon', 'shopify', 'generic'],
                             default='generic', help='Bug bounty program preset')
-    deep_parser.add_argument('-u', '--username', help='Program username (for scope validation)')
+    deep_parser.add_argument('-u', '--username', required=False,
+                            help='HackerOne username (e.g., for Amazon: amazonvrpresearcher_yourh1username)')
     deep_parser.add_argument('--parallel', action='store_true',
                             help='Enable parallel scanning (faster)')
     deep_parser.add_argument('--workers', type=int, default=5,
