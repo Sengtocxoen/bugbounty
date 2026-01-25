@@ -46,14 +46,23 @@ nano continuous_config.yaml
 ### 3. Run
 
 ```bash
-# Intelligent scan (recommended)
-python tools/intelligent_scanner.py example.com -s subdomains.txt
+# Intelligent scan (recommended - 80-85% faster)
+python scanner.py intelligent example.com -s subdomains.txt
 
-# Or continuous 24/7 scanning
-python tools/continuous_scanner.py -c continuous_config.yaml
+# Continuous 24/7 scanning
+python scanner.py continuous -c continuous_config.yaml
 
-# Or comprehensive one-time scan
-python tools/run_all.py example.com -p amazon -u yourh1user
+# Deep comprehensive scan
+python scanner.py deep example.com -p amazon
+
+# Wiz reconnaissance
+python scanner.py recon example.com --thorough
+
+# Quick subdomain discovery
+python scanner.py discover example.com
+
+# Help
+python scanner.py --help
 ```
 
 **📖 Full setup guide:** [docs/QUICKSTART.md](docs/QUICKSTART.md)
@@ -162,6 +171,7 @@ tail -f results/example_com/example_com/findings.jsonl
 ```
 bugbounty/
 ├── README.md                      # This file
+├── scanner.py                     # 🎯 UNIFIED ENTRY POINT (run this!)
 ├── install_enhanced_tools.sh      # One-command tool installation
 ├── continuous_config.yaml         # Configuration file
 ├── targets.txt.example            # Example targets file
@@ -174,21 +184,47 @@ bugbounty/
 │   ├── Testing_Strategy.md        # Testing strategies
 │   └── Quick_Reference_Checklist.md  # Quick reference
 │
-├── tools/                         # 🔧 Core scanners
-│   ├── intelligent_scanner.py     # Smart two-phase scanner
-│   ├── continuous_scanner.py      # 24/7 continuous scanner
-│   ├── smart_response_detector.py # Duplicate detection
-│   ├── streaming_results.py       # Real-time output
-│   ├── run_all.py                 # Unified comprehensive scanner
-│   ├── deep_scan.py               # Deep scanning engine
-│   ├── wiz_recon.py               # Wiz 5-phase recon
-│   └── web_hacking_2025/          # Vulnerability technique modules
+├── tools/                         # 🔧 Core modules (organized!)
+│   ├── scanners/                  # Scanning engines
+│   │   ├── intelligent_scanner.py # Smart two-phase scanner
+│   │   ├── continuous_scanner.py  # 24/7 continuous scanner
+│   │   ├── deep_scan.py           # Deep comprehensive scanner
+│   │   ├── parallel_scan.py       # Parallel execution engine
+│   │   └── wiz_recon.py           # Wiz 5-phase recon
+│   │
+│   ├── discovery/                 # Asset discovery
+│   │   ├── subdomain_discovery.py
+│   │   ├── enhanced_subdomain_scanner.py
+│   │   ├── endpoint_discovery.py
+│   │   └── bug_discovery.py
+│   │
+│   ├── analysis/                  # Analysis & detection
+│   │   ├── js_analyzer.py         # JavaScript analysis
+│   │   ├── tech_detection.py      # Technology detection
+│   │   ├── param_fuzzer.py        # Parameter fuzzing
+│   │   ├── false_positive_detector.py
+│   │   └── smart_response_detector.py
+│   │
+│   ├── utils/                     # Utilities
+│   │   ├── config.py
+│   │   ├── scope_validator.py
+│   │   ├── streaming_results.py   # Real-time output
+│   │   ├── external_tools.py
+│   │   └── tools_manager.py
+│   │
+│   └── techniques/                # Vulnerability techniques
+│       └── web_hacking_2025/      # SSRF, XSS, SQLi, SSTI, etc.
 │
 ├── Phases/                        # 📋 Phase-based methodology
 │   ├── Phase1_Reconnaissance.md
 │   ├── Phase2_Analysis.md
 │   ├── Phase3_Exploitation.md
 │   └── Phase4_Reporting.md
+│
+├── legacy/                        # Deprecated scripts (use scanner.py instead)
+│   ├── run_all.py
+│   ├── run_scan.py
+│   └── run_subdomain_scan.py
 │
 ├── automation/                    # Legacy automation
 ├── templates/                     # Report templates
@@ -241,37 +277,51 @@ For a typical medium-sized bug bounty program:
 subfinder -d example.com -silent > subs.txt
 
 # Smart scan with duplicate detection
-python tools/intelligent_scanner.py example.com \
-  -s subs.txt \
-  -o results/example_com \
-  -w 10
+python scanner.py intelligent example.com -s subs.txt -w 10
 
 # Watch live results (another terminal)
-tail -f results/example_com/example_com/findings.jsonl
+tail -f results/intelligent/example_com/findings.jsonl
 ```
 
 ### Continuous 24/7 Scanning
 
 ```bash
 # Run once
-python tools/continuous_scanner.py -c continuous_config.yaml
+python scanner.py continuous -c continuous_config.yaml
 
 # Or run as systemd service (recommended)
 sudo systemctl start bugbounty-scanner
 sudo systemctl enable bugbounty-scanner
 ```
 
-### Comprehensive One-Time Scan
+### Comprehensive Deep Scan
 
 ```bash
-# Full pipeline
-python tools/run_all.py example.com -p amazon -u yourh1user
+# Full scan on a single target
+python scanner.py deep example.com -p amazon
 
-# Parallel mode (faster)
-python tools/run_all.py example.com --parallel --workers 10
+# With parallel scanning (faster)
+python scanner.py deep example.com --parallel --workers 10
+```
 
-# Wiz reconnaissance methodology
-python tools/run_all.py example.com --wiz-recon --wiz-thorough
+### Wiz Reconnaissance
+
+```bash
+# Quick mode
+python scanner.py recon example.com --quick
+
+# Thorough mode
+python scanner.py recon example.com --thorough
+```
+
+### Asset Discovery Only
+
+```bash
+# Quick subdomain discovery
+python scanner.py discover example.com
+
+# Custom tools
+python scanner.py discover example.com --tools subfinder amass
 ```
 
 ### Tool-Specific Scans
@@ -421,17 +471,30 @@ Methodology inspired by:
 # Install everything
 ./install_enhanced_tools.sh
 
-# Smart scan
-python tools/intelligent_scanner.py example.com -s subdomains.txt
+# Intelligent scan (recommended)
+python scanner.py intelligent example.com -s subdomains.txt
 
 # Continuous scan
-python tools/continuous_scanner.py -c continuous_config.yaml
+python scanner.py continuous -c continuous_config.yaml
+
+# Deep scan
+python scanner.py deep example.com -p amazon
+
+# Recon only
+python scanner.py recon example.com
+
+# Discovery only
+python scanner.py discover example.com
 
 # View results
-tail -f results/example_com/example_com/findings.jsonl
+tail -f results/intelligent/example_com/findings.jsonl
 
 # Check stats
 cat results/scan_summary.json | jq '.'
+
+# Help
+python scanner.py --help
+python scanner.py intelligent --help
 ```
 
 ---
