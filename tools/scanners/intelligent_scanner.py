@@ -21,8 +21,8 @@ import logging
 
 from analysis.smart_response_detector import (
     SmartResponseDetector,
-    DeduplicationResult,
-    RESPONSE_SIMILARITY_THRESHOLD
+    AdaptiveRateLimiter,
+    SmartScanQueue
 )
 from utils.streaming_results import StreamingResultsWriter, Finding
 
