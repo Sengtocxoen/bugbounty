@@ -4,6 +4,10 @@ Bug Bounty Scanner
 Compliant scanner for Amazon VRP and Shopify Bug Bounty programs
 Includes rate limiting, proper headers, scope validation, and false positive detection
 
+⚠️  IMPORTANT: This is a library module, not meant to be run directly!
+    To run scans, use: python scanner.py <mode> [options]
+    Example: python scanner.py deep example.com -p amazon -u yourh1username
+
 False Positive Detection Features:
 - Redirect chain analysis for auth page detection
 - Baseline response comparison
@@ -1038,37 +1042,17 @@ class ShopifyScanner(BaseScanner):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("BUG BOUNTY SCANNER")
-    print("Amazon VRP & Shopify Bug Bounty")
+    print("⚠️  ERROR: Wrong Scanner File!")
+    print("=" * 60)
+    print("\nThis is a library module, not meant to be run directly!")
+    print("\n✅ To perform scans, use the main scanner from the project root:")
+    print("\n   python scanner.py <mode> [options]")
+    print("\nExamples:")
+    print("   python scanner.py deep amazonpayinsurance.in -p amazon -u sengtocxoen")
+    print("   python scanner.py intelligent example.com -s subdomains.txt")
+    print("   python scanner.py continuous -c continuous_config.yaml")
+    print("\nFor more help:")
+    print("   python scanner.py --help")
+    print("   python scanner.py deep --help")
     print("=" * 60)
 
-    # Demo mode - test scope validation
-    print("\n[DEMO] Testing scope validation only (no live scans)")
-
-    # Amazon scope test
-    print("\n--- Amazon VRP Scope Test ---")
-    amazon = AmazonScanner()
-    test_targets = [
-        "www.amazon.com",
-        "aws.amazon.com",  # Out of scope
-        "test.amazon.de",  # Out of scope (test env)
-    ]
-    for target in test_targets:
-        is_valid, reason = amazon.validate_target(target)
-        status = "IN SCOPE" if is_valid else "OUT OF SCOPE"
-        print(f"  {target}: {status}")
-
-    # Shopify scope test
-    print("\n--- Shopify Scope Test ---")
-    shopify = ShopifyScanner()
-    test_targets = [
-        "admin.shopify.com",
-        "community.shopify.com",  # Out of scope
-        "partners.shopify.com",
-    ]
-    for target in test_targets:
-        is_valid, reason = shopify.validate_target(target)
-        status = "IN SCOPE" if is_valid else "OUT OF SCOPE"
-        print(f"  {target}: {status}")
-
-    print("\n[*] Use run_scan.py to perform actual scans")
