@@ -60,7 +60,7 @@ except ImportError:
 # Add tools directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from external_tools import (
+from utils.external_tools import (
     SubfinderWrapper, PurednsWrapper, AlterxWrapper, HttpxWrapper, NmapWrapper,
     ToolChecker, ToolResult, HttpxResult
 )

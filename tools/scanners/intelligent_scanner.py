@@ -19,12 +19,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import logging
 
-from smart_response_detector import (
+from analysis.smart_response_detector import (
     SmartResponseDetector,
-    AdaptiveRateLimiter,
-    SmartScanQueue
+    DeduplicationResult,
+    RESPONSE_SIMILARITY_THRESHOLD
 )
-from streaming_results import StreamingResultsWriter, Finding
+from utils.streaming_results import StreamingResultsWriter, Finding
 
 
 class IntelligentScanner:
