@@ -23,7 +23,6 @@ import psutil
 sys.path.insert(0, str(Path(__file__).parent))
 
 from .deep_scan import DeepScanner, DeepScanConfig
-from .web_hacking_2025.scanner import WebHackingScanner
 from .wiz_recon import WizReconScanner
 
 

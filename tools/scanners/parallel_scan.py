@@ -39,8 +39,8 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).parent))
 
 from .deep_scan import DeepScanner, DeepScanConfig, DeepScanResult, SHUTDOWN_FLAG
-from web_hacking_2025.scanner import WebHackingScanner
-from web_hacking_2025.bugbounty_config import get_program_config, ScopeValidator
+from techniques.web_hacking_2025.scanner import WebHackingScanner
+from techniques.web_hacking_2025.bugbounty_config import get_program_config, ScopeValidator
 
 
 # Global shutdown flag
