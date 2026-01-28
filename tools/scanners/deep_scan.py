@@ -53,17 +53,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Import all scanner modules
 from utils.config import get_amazon_config, get_shopify_config, AmazonConfig, ShopifyConfig
 from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
-from enhanced_subdomain_scanner import (
+from discovery.enhanced_subdomain_scanner import (
     EnhancedSubdomainScanner, AmazonEnhancedScanner, ShopifyEnhancedScanner,
     ScanResult as SubdomainScanResult, SubdomainInfo, EXTENDED_WORDLIST, COMMON_PORTS
 )
-from endpoint_discovery import (
+from discovery.endpoint_discovery import (
     EndpointDiscovery, AmazonEndpointDiscovery, ShopifyEndpointDiscovery,
     EndpointResult, COMMON_PATHS
 )
-from tech_detection import TechDetector, AmazonTechDetector, ShopifyTechDetector
-from js_analyzer import JSAnalyzer, AmazonJSAnalyzer, ShopifyJSAnalyzer
-from param_fuzzer import ParamFuzzer, AmazonParamFuzzer, ShopifyParamFuzzer, FUZZ_PAYLOADS
+from analysis.tech_detection import TechDetector, AmazonTechDetector, ShopifyTechDetector
+from analysis.js_analyzer import JSAnalyzer, AmazonJSAnalyzer, ShopifyJSAnalyzer
+from analysis.param_fuzzer import ParamFuzzer, AmazonParamFuzzer, ShopifyParamFuzzer, FUZZ_PAYLOADS
 
 
 # Global flag for graceful shutdown

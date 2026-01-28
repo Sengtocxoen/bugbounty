@@ -23,19 +23,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.config import get_amazon_config, get_shopify_config
 from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
-from subdomain_discovery import (
+from discovery.subdomain_discovery import (
     SubdomainDiscovery, AmazonSubdomainDiscovery, ShopifySubdomainDiscovery
 )
-from endpoint_discovery import (
+from discovery.endpoint_discovery import (
     EndpointDiscovery, AmazonEndpointDiscovery, ShopifyEndpointDiscovery
 )
-from tech_detection import (
+from analysis.tech_detection import (
     TechDetector, AmazonTechDetector, ShopifyTechDetector
 )
-from js_analyzer import (
+from analysis.js_analyzer import (
     JSAnalyzer, AmazonJSAnalyzer, ShopifyJSAnalyzer
 )
-from param_fuzzer import (
+from analysis.param_fuzzer import (
     ParamFuzzer, AmazonParamFuzzer, ShopifyParamFuzzer
 )
 
