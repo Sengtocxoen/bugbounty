@@ -103,6 +103,12 @@ class DeepScanConfig:
     skip_js: bool = False
     skip_fuzz: bool = False
     skip_recursive: bool = False
+    skip_verification: bool = False  # NEW: Skip vulnerability verification
+
+    # Verification options
+    verification_threads: int = 10  # Concurrent verification threads
+    verify_only_high_priority: bool = False  # Only verify critical/high severity findings
+    test_default_credentials: bool = False  # Test default creds on admin panels (disabled by default)
 
     # Deep scanning options (no limits by default)
     max_subdomains: int = 0  # 0 = unlimited
@@ -157,6 +163,10 @@ class DeepScanResult:
 
     # Port scan results
     open_ports: Dict[str, List[Dict]] = field(default_factory=dict)
+
+    # Verification results
+    verified_findings: List[Dict] = field(default_factory=list)
+    verification_summary: Dict[str, int] = field(default_factory=dict)
 
     # Statistics
     total_requests: int = 0
