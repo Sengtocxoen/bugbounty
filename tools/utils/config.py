@@ -14,6 +14,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent.parent.parent
 AMAZON_DIR = BASE_DIR / "Amazon"
 SHOPIFY_DIR = BASE_DIR / "Shopify"
+ANDURIL_DIR = Path("F:/work/BugBounty/Target/Anduril Industries")
+
 
 @dataclass
 class AmazonConfig:
@@ -160,7 +162,79 @@ class ShopifyConfig:
         return f"{self.h1_username}@wearehackerone.com"
 
 
-# Vulnerability priorities (for both programs)
+@dataclass
+class AndurilConfig:
+    """Anduril Industries Bug Bounty Configuration - MUST follow program rules"""
+    
+    # REQUIRED: HackerOne username for HTTP header
+    h1_username: str = "yourh1username"
+    
+    # User-Agent (program doesn't specify requirements, but be identifiable)
+    @property
+    def user_agent(self) -> str:
+        return f"AndurilBugBountyResearcher_{self.h1_username}"
+    
+    # REQUIRED: Custom HTTP header per program rules
+    @property
+    def custom_headers(self) -> dict:
+        return {
+            "X-HackerOne-Research": self.h1_username
+        }
+    
+    # Rate limiting (program doesn't specify, use conservative approach)
+    rate_limit: float = 5.0  # requests per second (conservative)
+    request_delay: float = 0.2  # seconds between requests
+    
+    # Scope file
+    scope_file: Path = field(default_factory=lambda: ANDURIL_DIR / "scopes_for_anduril_industries_at_2026-01-28_15_34_56_UTC.csv")
+    
+    # In-scope wildcards (from scope file)
+    in_scope_wildcards: List[str] = field(default_factory=lambda: [
+        "*.anduril.com",
+        "*.andurildev.com",
+        "*.anduril.dev",
+        "*.andurildev.au",
+        "*.anduril.au",
+        "*.anduril.com.au",
+    ])
+    
+    # Out-of-scope (from scope file and common sense)
+    out_of_scope: List[str] = field(default_factory=lambda: [
+        "andurilgear.com",  # Explicitly marked as not eligible
+    ])
+    
+    # Out-of-scope patterns (be conservative with defense company)
+    out_of_scope_patterns: List[str] = field(default_factory=lambda: [
+        "internal",
+        "intranet",
+        "vpn",
+        "admin",  # Unless explicitly in scope
+    ])
+    
+    # Timeout settings
+    request_timeout: int = 30
+    
+    # Output directory
+    output_dir: Path = field(default_factory=lambda: ANDURIL_DIR / "scan_results")
+    
+    # Email format for testing
+    @property
+    def test_email(self) -> str:
+        return f"{self.h1_username}@wearehackerone.com"
+    
+    # Program-specific notes
+    program_notes: str = """
+    CRITICAL PROGRAM RULES:
+    - Add X-HackerOne-Research header to ALL requests
+    - Do NOT exfiltrate any data under any circumstances
+    - Do NOT compromise privacy/safety of personnel
+    - Ask team before testing unscoped subdomains
+    - Physical testing is STRICTLY PROHIBITED
+    - This is a defense company - be extra cautious and professional
+    """
+
+
+# Vulnerability priorities (for all programs)
 VULN_PRIORITIES = {
     "critical": [
         "RCE",              # Remote Code Execution
@@ -241,6 +315,13 @@ def get_amazon_config(h1_username: Optional[str] = None) -> AmazonConfig:
 def get_shopify_config(h1_username: Optional[str] = None) -> ShopifyConfig:
     """Get Shopify configuration with optional username override"""
     config = ShopifyConfig()
+    if h1_username:
+        config.h1_username = h1_username
+    return config
+
+def get_anduril_config(h1_username: Optional[str] = None) -> AndurilConfig:
+    """Get Anduril Industries configuration with optional username override"""
+    config = AndurilConfig()
     if h1_username:
         config.h1_username = h1_username
     return config

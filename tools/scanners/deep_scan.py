@@ -51,7 +51,7 @@ import traceback
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import all scanner modules
-from utils.config import get_amazon_config, get_shopify_config, AmazonConfig, ShopifyConfig
+from utils.config import get_amazon_config, get_shopify_config, get_anduril_config, AmazonConfig, ShopifyConfig, AndurilConfig
 from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
 from discovery.enhanced_subdomain_scanner import (
     EnhancedSubdomainScanner, AmazonEnhancedScanner, ShopifyEnhancedScanner,
@@ -201,6 +201,15 @@ class DeepScanner:
             self.js_analyzer = ShopifyJSAnalyzer(config.username)
             self.param_fuzzer = ShopifyParamFuzzer(config.username)
             self.scope_validator = ShopifyScopeValidator(self.program_config)
+        elif config.program == "anduril":
+            # Anduril Industries - use generic scanners with Anduril config
+            self.program_config = get_anduril_config(config.username)
+            self.subdomain_scanner = EnhancedSubdomainScanner()
+            self.endpoint_discovery = EndpointDiscovery()
+            self.tech_detector = TechDetector()
+            self.js_analyzer = JSAnalyzer()
+            self.param_fuzzer = ParamFuzzer()
+            self.scope_validator = None  # No custom scope validator yet
         else:
             self.program_config = None
             self.subdomain_scanner = EnhancedSubdomainScanner()

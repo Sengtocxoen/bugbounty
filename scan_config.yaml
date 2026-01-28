@@ -1,0 +1,185 @@
+# Bug Bounty Scanner Configuration
+# Edit this file to configure your scan, then run: python scanner.py --config scan_config.yaml
+
+# ============================================================================
+# SCAN SETTINGS
+# ============================================================================
+
+# Program name (amazon, shopify, anduril, or leave empty for generic)
+program: "anduril"
+
+# Your HackerOne username (required for program-specific scans)
+h1_username: "your_h1_username"
+
+# ============================================================================
+# TARGETS
+# ============================================================================
+
+# List of targets to scan (domains, subdomains, or IPs)
+targets:
+  - "anduril.com"
+  # - "app.anduril.com"
+  # - "api.anduril.com"
+
+# ============================================================================
+# CUSTOM HEADERS
+# ============================================================================
+
+# Add custom HTTP headers to all requests
+custom_headers:
+  X-HackerOne-Research: "your_h1_username"  # Required for Anduril
+  # User-Agent: "Custom-Agent"  # Uncomment to override
+  # X-Custom-Header: "value"
+
+# ============================================================================
+# RATE LIMITING
+# ============================================================================
+
+# Requests per second (leave empty to use program defaults)
+rate_limit: 5  # Conservative rate for Anduril
+
+# Delay between requests in seconds
+request_delay: 0.2
+
+# Request timeout in seconds
+request_timeout: 30
+
+# ============================================================================
+# SCAN PHASES (true = run, false = skip)
+# ============================================================================
+
+phases:
+  subdomain_discovery: true    # Phase 1: Find subdomains
+  port_scanning: true          # Phase 2: Scan ports
+  endpoint_discovery: true     # Phase 3: Find URLs/endpoints
+  tech_detection: true         # Phase 4: Fingerprint technologies
+  js_analysis: true            # Phase 5: Analyze JavaScript files
+  param_fuzzing: true          # Phase 6: Test for vulnerabilities
+  verification: true           # Phase 7: Verify findings
+
+# ============================================================================
+# SCAN LIMITS (0 = unlimited)
+# ============================================================================
+
+limits:
+  max_subdomains: 0      # Maximum subdomains to test
+  max_endpoints: 0       # Maximum endpoints to discover
+  max_js_files: 0        # Maximum JS files to analyze
+  max_fuzz_urls: 0       # Maximum URLs to fuzz
+  max_depth: 0           # Maximum recursion depth
+
+# ============================================================================
+# PORT SCANNING
+# ============================================================================
+
+port_scan:
+  full_scan: true        # Scan all common ports (true) or just web ports (false)
+  custom_ports: []       # Add specific ports: [8080, 8443, 3000]
+
+# ============================================================================
+# VERIFICATION SETTINGS
+# ============================================================================
+
+verification:
+  threads: 10                    # Concurrent verification threads
+  verify_only_high_priority: false  # Only verify critical/high findings
+  test_default_credentials: false   # Test default creds (DANGER!)
+
+# ============================================================================
+# WORDLISTS
+# ============================================================================
+
+wordlists:
+  use_extended: true          # Use extended wordlists (slower, more thorough)
+  custom_wordlist: null       # Path to custom wordlist file
+
+# ============================================================================
+# OUTPUT SETTINGS
+# ============================================================================
+
+output:
+  directory: "F:/work/BugBounty/Target/Anduril Industries/scan_results"
+  save_json: true          # Save results as JSON
+  save_txt: true           # Save results as text report
+  save_html: false         # Save results as HTML report
+  verbose: true            # Show detailed output during scan
+
+# ============================================================================
+# SCOPE VALIDATION (program-specific)
+# ============================================================================
+
+scope:
+  # Enforce scope validation (only for programs with scope validators)
+  enforce_scope: true
+  
+  # Additional in-scope patterns (beyond program defaults)
+  additional_in_scope: []
+    # - "*.newdomain.com"
+  
+  # Additional out-of-scope patterns
+  additional_out_scope: []
+    # - "test.*"
+    # - "*.staging.*"
+
+# ============================================================================
+# SAFETY SETTINGS
+# ============================================================================
+
+safety:
+  # Confirm before starting scan
+  confirm_before_run: true
+  
+  # Show configuration review before starting
+  show_review: true
+  
+  # Maximum concurrent threads for all operations
+  max_threads: 10
+  
+  # Stop scan on critical error
+  stop_on_critical_error: false
+
+# ============================================================================
+# NOTIFICATIONS (optional)
+# ============================================================================
+
+notifications:
+  enabled: false
+  # webhook_url: "https://hooks.slack.com/..."  # Slack/Discord webhook
+  # notify_on_critical: true                     # Alert on critical findings
+  # notify_on_completion: true                   # Alert when scan completes
+
+# ============================================================================
+# ADVANCED OPTIONS
+# ============================================================================
+
+advanced:
+  # Follow redirects
+  follow_redirects: true
+  
+  # Verify SSL certificates
+  verify_ssl: true
+  
+  # Retry failed requests
+  retry_count: 3
+  
+  # User-Agent override (leave empty to use program default)
+  user_agent: ""
+  
+  # Proxy settings
+  proxy: null  # "http://127.0.0.1:8080"
+  
+  # Resume from previous scan
+  resume_scan_id: null
+
+# ============================================================================
+# NOTES
+# ============================================================================
+
+# Scan notes (for your reference, not used by scanner)
+notes: |
+  Anduril Industries Bug Bounty Scan
+  - Defense contractor - be extra cautious
+  - Required header: X-HackerOne-Research
+  - NO data exfiltration
+  - NO physical testing
+  - Ask before testing unscoped subdomains
