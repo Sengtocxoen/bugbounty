@@ -34,13 +34,13 @@ except ImportError:
     print("ERROR: requests library required. Install with: pip install requests")
     exit(1)
 
-from config import (
+from utils.config import (
     AmazonConfig, ShopifyConfig,
     get_amazon_config, get_shopify_config,
     SECURITY_HEADERS, TEST_PAYLOADS, VULN_PRIORITIES
 )
-from scope_validator import AmazonScopeValidator, ShopifyScopeValidator
-from false_positive_detector import FalsePositiveDetector, RedirectTracker
+from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
+from analysis.false_positive_detector import FalsePositiveDetector, RedirectTracker
 
 
 @dataclass
