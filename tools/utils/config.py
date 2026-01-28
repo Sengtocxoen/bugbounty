@@ -10,7 +10,8 @@ from typing import List, Optional
 from pathlib import Path
 
 # Base paths
-BASE_DIR = Path(__file__).parent.parent
+# Go up from tools/utils/config.py -> tools/utils -> tools -> bugbounty (project root)
+BASE_DIR = Path(__file__).parent.parent.parent
 AMAZON_DIR = BASE_DIR / "Amazon"
 SHOPIFY_DIR = BASE_DIR / "Shopify"
 
