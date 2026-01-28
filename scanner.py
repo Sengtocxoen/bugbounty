@@ -188,13 +188,11 @@ def run_deep_mode(args):
     
     # Create config
     config = DeepScanConfig(
-        target=args.target,
+        targets=[args.target],  # Convert single target to list
         program=args.program,
-        program_username=args.username,
-        parallel=args.parallel,
-        max_workers=args.workers,
-        skip_web=args.skip_web,
-        skip_ports=args.skip_ports
+        username=args.username,  # Not program_username
+        skip_ports=args.skip_ports if hasattr(args, 'skip_ports') else False,
+        skip_endpoints=args.skip_web if hasattr(args, 'skip_web') else False,
     )
     
     # Run scan
