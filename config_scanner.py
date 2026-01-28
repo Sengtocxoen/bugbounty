@@ -226,22 +226,16 @@ def main():
     print("\n🚀 Starting scan with configuration:")
     print(f"   Command: python scanner.py {' '.join(args)}\n")
     
-    # Import and run the scanner
-    sys.path.insert(0, str(Path(__file__).parent / "tools"))
-    
-    # Import scanner after adding to path
-    import scanner
-    
     # Set custom headers if specified
     if config.get('custom_headers'):
-        # Store custom headers globally for the scanner to use
         import os
         for key, value in config['custom_headers'].items():
             os.environ[f'SCANNER_HEADER_{key}'] = str(value)
     
-    # Run scanner with args
+    # Run scanner with args by directly executing scanner.py
+    import runpy
     sys.argv = ['scanner.py'] + args
-    scanner.main()
+    runpy.run_path('scanner.py', run_name='__main__')
 
 if __name__ == '__main__':
     try:

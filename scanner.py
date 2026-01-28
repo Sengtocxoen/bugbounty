@@ -85,8 +85,9 @@ For more help: python scanner.py <mode> --help
         help='Comprehensive single-target scan with all tools',
         description='Deep scanner: Full vulnerability scanning, thorough but slower'
     )
-    deep_parser.add_argument('target', help='Target domain')
-    deep_parser.add_argument('-p', '--program', choices=['amazon', 'shopify', 'generic'],
+    deep_parser.add_argument('-t', '--target', action='append', dest='targets',
+                            help='Target domain (can specify multiple with -t domain1 -t domain2)')
+    deep_parser.add_argument('-p', '--program', choices=['amazon', 'shopify', 'anduril', 'generic'],
                             default='generic', help='Bug bounty program preset')
     deep_parser.add_argument('-u', '--username', required=False,
                             help='HackerOne username (e.g., for Amazon: amazonvrpresearcher_yourh1username)')
@@ -98,6 +99,8 @@ For more help: python scanner.py <mode> --help
                             help='Skip web vulnerability scanning')
     deep_parser.add_argument('--skip-ports', action='store_true',
                             help='Skip port scanning')
+    deep_parser.add_argument('--verbose', action='store_true',
+                            help='Verbose output')
     
     # === RECON MODE ===
     recon_parser = subparsers.add_parser(
@@ -181,18 +184,27 @@ def run_continuous_mode(args):
 def run_deep_mode(args):
     """Run deep scanner"""
     print("\n🔍 Starting Deep Scanner...")
-    print(f"Target: {args.target}")
+    
+    # Handle targets (can be None if not specified)
+    targets = args.targets if hasattr(args, 'targets') and args.targets else []
+    
+    if not targets:
+        print("❌ Error: No targets specified. Use -t domain1 -t domain2")
+        sys.exit(1)
+    
+    print(f"Targets: {', '.join(targets)}")
     print(f"Program: {args.program}")
     
     from scanners.deep_scan import DeepScanner, DeepScanConfig
     
     # Create config
     config = DeepScanConfig(
-        targets=[args.target],  # Convert single target to list
+        targets=targets,
         program=args.program,
         username=args.username,  # Not program_username
         skip_ports=args.skip_ports if hasattr(args, 'skip_ports') else False,
         skip_endpoints=args.skip_web if hasattr(args, 'skip_web') else False,
+        verbose=args.verbose if hasattr(args, 'verbose') else True,
     )
     
     # Run scan
