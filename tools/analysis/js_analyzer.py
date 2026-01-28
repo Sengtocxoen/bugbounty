@@ -27,6 +27,7 @@ except ImportError:
     exit(1)
 
 from utils.config import get_amazon_config, get_shopify_config
+from utils.secret_patterns import SecretDetector, ALL_SECRET_PATTERNS
 
 
 @dataclass
@@ -292,7 +293,23 @@ class JSAnalyzer:
     def find_secrets(self, js_content: str, source_file: str) -> List[SecretFinding]:
         """Find potential secrets in JavaScript code"""
         findings = []
-
+        
+        # Use the enhanced secret detector
+        detector = SecretDetector(ALL_SECRET_PATTERNS)
+        detected_secrets = detector.scan(js_content, context_chars=50)
+        
+        # Convert to SecretFinding objects
+        for secret in detected_secrets:
+            finding = SecretFinding(
+                type=secret['type'],
+                value=self._redact_secret(secret['value']),
+                context=secret['context'][:100] + "..." if len(secret['context']) > 100 else secret['context'],
+                file=source_file,
+                severity=secret['severity'],
+            )
+            findings.append(finding)
+        
+        # Also use existing patterns for backward compatibility
         for secret_type, config in SECRET_PATTERNS.items():
             matches = re.finditer(config["pattern"], js_content, re.IGNORECASE)
             for match in matches:
@@ -318,7 +335,16 @@ class JSAnalyzer:
                 )
                 findings.append(finding)
 
-        return findings
+        # Deduplicate by value+type
+        seen = set()
+        unique_findings = []
+        for f in findings:
+            key = (f.type, f.value)
+            if key not in seen:
+                seen.add(key)
+                unique_findings.append(f)
+
+        return unique_findings
 
     def find_api_endpoints(self, js_content: str, base_url: str, source_file: str) -> List[ApiEndpoint]:
         """Extract API endpoints from JavaScript"""
