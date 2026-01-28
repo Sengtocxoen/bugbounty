@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
-from config import AmazonConfig, ShopifyConfig, get_amazon_config, get_shopify_config
+from .config import AmazonConfig, ShopifyConfig, get_amazon_config, get_shopify_config
 
 
 @dataclass

@@ -27,7 +27,7 @@ except ImportError:
     print("ERROR: requests library required. Install with: pip install requests")
     exit(1)
 
-from config import get_amazon_config, get_shopify_config
+from utils.config import get_amazon_config, get_shopify_config
 
 
 @dataclass

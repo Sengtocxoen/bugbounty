@@ -29,8 +29,8 @@ except ImportError:
     print("ERROR: requests library required. Install with: pip install requests")
     exit(1)
 
-from config import get_amazon_config, get_shopify_config
-from false_positive_detector import FalsePositiveDetector, RedirectTracker
+from utils.config import get_amazon_config, get_shopify_config
+from analysis.false_positive_detector import FalsePositiveDetector, RedirectTracker
 
 
 @dataclass

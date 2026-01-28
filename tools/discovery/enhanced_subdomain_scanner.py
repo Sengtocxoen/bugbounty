@@ -46,8 +46,8 @@ except ImportError:
     print("ERROR: requests library required. Install with: pip install requests")
     exit(1)
 
-from config import AmazonConfig, ShopifyConfig, get_amazon_config, get_shopify_config
-from scope_validator import AmazonScopeValidator, ShopifyScopeValidator
+from utils.config import AmazonConfig, ShopifyConfig, get_amazon_config, get_shopify_config
+from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
 
 
 # Extended subdomain wordlist for comprehensive brute-forcing

@@ -64,8 +64,8 @@ from external_tools import (
     SubfinderWrapper, PurednsWrapper, AlterxWrapper, HttpxWrapper, NmapWrapper,
     ToolChecker, ToolResult, HttpxResult
 )
-from config import get_amazon_config, get_shopify_config, AmazonConfig, ShopifyConfig
-from scope_validator import AmazonScopeValidator, ShopifyScopeValidator
+from utils.config import get_amazon_config, get_shopify_config, AmazonConfig, ShopifyConfig
+from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
 
 
 # Extended wordlist for DNS bruteforcing (Wiz recommended)

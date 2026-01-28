@@ -51,8 +51,8 @@ import traceback
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import all scanner modules
-from config import get_amazon_config, get_shopify_config, AmazonConfig, ShopifyConfig
-from scope_validator import AmazonScopeValidator, ShopifyScopeValidator
+from utils.config import get_amazon_config, get_shopify_config, AmazonConfig, ShopifyConfig
+from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
 from enhanced_subdomain_scanner import (
     EnhancedSubdomainScanner, AmazonEnhancedScanner, ShopifyEnhancedScanner,
     ScanResult as SubdomainScanResult, SubdomainInfo, EXTENDED_WORDLIST, COMMON_PORTS

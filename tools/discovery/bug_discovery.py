@@ -21,8 +21,8 @@ from typing import List, Dict, Optional
 # Add tools directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import get_amazon_config, get_shopify_config
-from scope_validator import AmazonScopeValidator, ShopifyScopeValidator
+from utils.config import get_amazon_config, get_shopify_config
+from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
 from subdomain_discovery import (
     SubdomainDiscovery, AmazonSubdomainDiscovery, ShopifySubdomainDiscovery
 )
