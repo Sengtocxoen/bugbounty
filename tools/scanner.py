@@ -45,6 +45,10 @@ from utils.config import (
 )
 from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
 from analysis.false_positive_detector import FalsePositiveDetector, RedirectTracker
+from discovery.cloud_enum import CloudEnumerator
+from techniques.waf_evasion import WAFEvader
+from verification.oob_detector import OOBDetector
+from analysis.js_analyzer import JSAnalyzer, AmazonJSAnalyzer, ShopifyJSAnalyzer
 
 
 @dataclass
@@ -131,6 +135,11 @@ class BaseScanner:
             'findings_verified': 0,
             'false_positives_filtered': 0,
         }
+        
+        # Initialize new engines
+        self.cloud_enum = CloudEnumerator(rate_limit=rate_limit)
+        self.waf_evader = WAFEvader(rate_limit=rate_limit)
+        self.oob_detector = OOBDetector() # Defaults to interact.sh logic
 
     def _create_session(self) -> requests.Session:
         """Create a session with retry logic"""
@@ -268,6 +277,111 @@ class BaseScanner:
 
         self.fp_stats['findings_verified'] += 1
         return True, "Verified"
+
+        self.fp_stats['findings_verified'] += 1
+        return True, "Verified"
+
+    def detect_waf(self, url: str) -> List[Finding]:
+        """Detect Web Application Firewall"""
+        findings = []
+        try:
+            print("    [+] Detecting WAF...")
+            waf_info = self.waf_evader.detect_waf(url)
+            
+            if waf_info.detected:
+                finding = Finding(
+                    target=url,
+                    vuln_type="WAF Detected",
+                    severity="info",
+                    description=f"WAF detected: {waf_info.name}",
+                    evidence=f"Confidence: {waf_info.confidence}",
+                    reproduction_steps=[],
+                    verified=True,
+                    confidence=waf_info.confidence
+                )
+                findings.append(finding)
+                print(f"      [!] WAF: {waf_info.name}")
+        except Exception as e:
+            self.errors.append(f"WAF Check Error: {e}")
+            
+        return findings
+
+    def check_cloud_assets(self, target: str) -> List[Finding]:
+        """Enumerate cloud storage buckets"""
+        findings = []
+        try:
+            domain = urlparse(target).netloc
+            print(f"    [+] Enumerating cloud buckets for {domain}...")
+            
+            # This can be slow, so run in background or limit
+            result = self.cloud_enum.enumerate(domain)
+            
+            for bucket in result.buckets:
+                if bucket.exists:
+                    severity = "high" if "list" in bucket.permissions else "low"
+                    finding = Finding(
+                        target=bucket.url,
+                        vuln_type="Cloud Bucket Found",
+                        severity=severity,
+                        description=f"Found {bucket.provider.upper()} bucket: {bucket.name}",
+                        evidence=f"Permissions: {', '.join(bucket.permissions)}, Auth Required: {bucket.auth_required}",
+                        reproduction_steps=[f"1. Access {bucket.url}"],
+                        verified=True,
+                        confidence="high"
+                    )
+                    findings.append(finding)
+        except Exception as e:
+            self.errors.append(f"Cloud Enum Error: {e}")
+            
+        return findings
+
+    def check_js_files(self, url: str, recursive: bool = False) -> List[Finding]:
+        """Analyze JavaScript files"""
+        findings = []
+        try:
+            print("    [+] Analyzing JavaScript files...")
+            
+            # Instantiate appropriate analyzer
+            if isinstance(self, AmazonScanner):
+                analyzer = AmazonJSAnalyzer()
+            elif isinstance(self, ShopifyScanner):
+                analyzer = ShopifyJSAnalyzer()
+            else:
+                analyzer = JSAnalyzer() 
+                
+            if recursive:
+                result = analyzer.recursive_analyze(url, max_depth=2)
+            else:
+                result = analyzer.analyze_url(url)
+                
+            # Convert JS findings to Scanner findings
+            for secret in result.secrets:
+                findings.append(Finding(
+                    target=secret.file,
+                    vuln_type=f"Secret: {secret.type}",
+                    severity=secret.severity,
+                    description=f"Found potential {secret.type} in JS",
+                    evidence=f"Value: {secret.value}",
+                    reproduction_steps=[f"Check {secret.file}"],
+                    verified=True
+                ))
+                
+            for ep in result.api_endpoints:
+                if ep.validated: # Only add validated endpoints as info
+                     findings.append(Finding(
+                        target=ep.url,
+                        vuln_type="Interesting API Endpoint",
+                        severity="info",
+                        description=f"Discovered {ep.method} endpoint",
+                        evidence=f"Source: {ep.source_file}",
+                        reproduction_steps=[],
+                        verified=True
+                     ))
+                     
+        except Exception as e:
+            self.errors.append(f"JS Analysis Error: {e}")
+            
+        return findings
 
     def check_security_headers(self, url: str) -> List[Finding]:
         """Check for missing security headers"""
@@ -704,6 +818,10 @@ class AmazonScanner(BaseScanner):
             print("    Checking SSL/TLS...")
             self.findings.extend(self.check_ssl_tls(parsed.netloc))
 
+        # Advanced Checks
+        self.findings.extend(self.check_cloud_assets(target))
+        self.findings.extend(self.check_js_files(target, recursive=True))
+
         end_time = datetime.utcnow().isoformat()
 
         result = ScanResult(
@@ -942,11 +1060,13 @@ class ShopifyScanner(BaseScanner):
         print("    Checking for information disclosure...")
         self.findings.extend(self.check_information_disclosure(target))
 
-        # SSL/TLS check
-        parsed = urlparse(target)
         if parsed.scheme == 'https':
             print("    Checking SSL/TLS...")
             self.findings.extend(self.check_ssl_tls(parsed.netloc))
+
+        # Advanced Checks
+        self.findings.extend(self.check_cloud_assets(target))
+        self.findings.extend(self.check_js_files(target, recursive=True))
 
         end_time = datetime.utcnow().isoformat()
 

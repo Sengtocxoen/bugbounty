@@ -1,140 +1,57 @@
-# Bug Bounty Scanner
+# Bug Bounty Scanner & Intelligence Suite
 
-A comprehensive, configuration-based vulnerability scanner for bug bounty programs.
+A comprehensive, automated bug bounty reconnaissance and vulnerability scanning suite designed for the modern "Recursive Hacking Intelligence" methodology.
 
-## 🚀 Quick Start
+## 🚀 Key Features
 
-1. **Edit Configuration**
-   ```bash
-   notepad scan_config.yaml
-   ```
+### 🧠 Intelligent Reconnaissance
+- **Recursive JS Analysis**: Deep-dive into JavaScript files to find hidden API endpoints, secrets, and DOM sinks.
+- **Cloud Enumeration**: Automatically finds S3 buckets, Azure Blobs, and GCS buckets with permission checking.
+- **Smart Tech Detection**: Identifies frameworks and tech stacks to tailor attacks.
 
-2. **Set Your Settings**
-   ```yaml
-   program: "anduril"              # Program name
-   h1_username: "your_username"    # Your HackerOne username
-   
-   targets:
-     - "example.com"               # Add your targets
-   
-   custom_headers:
-     X-HackerOne-Research: "your_username"  # Required headers
-   ```
+### 🛡️ Advanced Evasion & Detection
+- **WAF Evasion**: Automatically detects WAFs (Cloudflare/AWS) and applies evasion techniques (encoding, IP spoofing, adaptive delays).
+- **Out-of-Band (OOB) Detection**: Integrated support for blind vulnerabilities (SSRF, XXE, SQLi) via `interact.sh` or custom callbacks.
+- **False Positive Filtering**: Smart detection logic to filter out soft 404s, auth redirects, and generic errors.
 
-3. **Run Scanner**
-   ```bash
-   python config_scanner.py scan_config.yaml
-   ```
+### 🎯 Vulnerability Scanning
+- **Context-Aware Fuzzing**: Selects payloads based on the detected technology (e.g., PHP vs Java).
+- **Template Deduplication**: Hashes page structures to avoid scanning the same page type multiple times.
+- **Safety First**: Non-destructive payloads designed for bug bounty programs (Amazon VRP, etc.).
 
-4. **Review & Confirm**
-   - Scanner shows complete configuration review
-   - Confirm to start, or cancel if something's wrong
+## 🛠️ Usage
 
-## 📁 Structure
-
-```
-bugbounty/
-├── config_scanner.py          # Main scanner (runs from config file)
-├── scan_config.yaml           # YOUR CONFIGURATION FILE
-├── scanner.py                 # Direct scanner (command-line)
-├── requirements.txt           # Dependencies
-├── tools/                     # Scanner modules
-│   ├── discovery/             # Subdomain & endpoint discovery
-│   ├── analysis/              # Tech detection, JS analysis, fuzzing
-│   ├── verification/          # Vulnerability verification
-│   └── utils/                 # Config & utilities
-└── docs/                      # Documentation
-```
-
-## ⚙️ Configuration
-
-Edit `scan_config.yaml` to set:
-
-- **Program**: `amazon`, `shopify`, `anduril`, or leave empty
-- **Targets**: List of domains to scan
-- **Custom Headers**: Add required HTTP headers
-- **Phases**: Enable/disable scan phases
-- **Rate Limiting**: Requests per second
-- **Verification**: Auto-verify findings
-- **Output**: Where to save results
-
-## 🎯 Scan Phases
-
-1. **Subdomain Discovery** - Find subdomains (8+ sources)
-2. **Port Scanning** - Scan common ports
-3. **Endpoint Discovery** - Find URLs & endpoints
-4. **Technology Detection** - Fingerprint technologies
-5. **JavaScript Analysis** - Extract secrets & APIs
-6. **Parameter Fuzzing** - Test for vulnerabilities
-7. **Vulnerability Verification** - Confirm findings
-
-## 📋 Supported Programs
-
-- **Amazon VRP** - Auto-configured with required User-Agent
-- **Shopify** - Bug bounty program settings
-- **Anduril Industries** - Required X-HackerOne-Research header
-- **Generic** - Works with any program
-
-## 💡 Examples
-
-### Quick Recon
-```yaml
-phases:
-  subdomain_discovery: true
-  port_scanning: true
-  verification: false
-```
-
-### Full Deep Scan
-```yaml
-phases:
-  subdomain_discovery: true
-  port_scanning: true
-  endpoint_discovery: true
-  tech_detection: true
-  js_analysis: true
-  param_fuzzing: true
-  verification: true
-```
-
-### Verification Only
-```yaml
-phases:
-  subdomain_discovery: false
-  # ... all false except:
-  verification: true
-```
-
-## 🛠️ Installation
-
+### 1. Cloud Storage Enumeration
+Find hidden buckets associated with a target domain.
 ```bash
-pip install -r requirements.txt
+python -m tools.discovery.cloud_enum example.com
 ```
 
-## 📚 Documentation
-
-- `docs/CONFIG_QUICKSTART.md` - Quick start guide
-- `docs/CONFIG_TEMPLATES.md` - Configuration templates
-- `tools/verification/README.md` - Verification system docs
-
-## 🔧 Command Line (Alternative)
-
-You can also use direct command-line mode:
-
+### 2. Recursive JavaScript Analysis
+Deep analysis of JS files to find endpoints and secrets.
 ```bash
-python scanner.py deep -t example.com --program anduril --username yourh1user
+python -m tools.analysis.js_analyzer https://example.com --recursive --depth 2
 ```
 
-But configuration file mode is recommended for easier use.
+### 3. WAF Detection & Evasion
+Check for WAFs and generate evasion payloads.
+```bash
+python -m tools.techniques.waf_evasion --url https://example.com
+```
 
-## ⚠️ Safety
+### 4. Full Scan (Integrated)
+Run the complete scanner with all modules enabled.
+```bash
+python scanner.py --config scan_config.yaml
+```
 
-- **Always review** configuration before running
-- **Respect rate limits** set by programs
-- **Test on authorized targets** only
-- **No data exfiltration** - read-only verification
-- **Follow program rules** - check HackerOne program page
+## 📂 Project Structure
 
-## 📝 License
+- `tools/discovery/`: Recon tools (Cloud buckets, Subdomains)
+- `tools/analysis/`: Analysis engines (JS, Tech, Fuzzing)
+- `tools/techniques/`: Advanced techniques (WAF Evasion)
+- `tools/verification/`: Verification modules (OOB, Detectors)
+- `tools/utils/`: Shared utilities (Config, Scope)
 
-For bug bounty research only. Use responsibly.
+## ⚠️ Disclaimer
+This tool is for authorized bug bounty research only. Ensure you have permission to scan the target. Follow all program rules and scopings.
