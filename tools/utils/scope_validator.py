@@ -88,7 +88,10 @@ class AmazonScopeValidator(ScopeValidator):
     def __init__(self, config: Optional[AmazonConfig] = None):
         super().__init__()
         self.config = config or get_amazon_config()
-        self.load_from_csv(self.config.scope_file)
+        # CSV file is optional - if it doesn't exist, we'll use config patterns
+        if self.config.scope_file and Path(self.config.scope_file).exists():
+            self.load_from_csv(self.config.scope_file)
+        # If no CSV, scope validation will rely on config wildcard patterns
 
     def is_in_scope(self, target: str) -> Tuple[bool, str]:
         """
@@ -186,7 +189,10 @@ class ShopifyScopeValidator(ScopeValidator):
     def __init__(self, config: Optional[ShopifyConfig] = None):
         super().__init__()
         self.config = config or get_shopify_config()
-        self.load_from_csv(self.config.scope_file)
+        # CSV file is optional - if it doesn't exist, we'll use config patterns
+        if self.config.scope_file and Path(self.config.scope_file).exists():
+            self.load_from_csv(self.config.scope_file)
+        # If no CSV, scope validation will rely on config patterns
 
     def is_in_scope(self, target: str) -> Tuple[bool, str]:
         """
