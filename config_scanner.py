@@ -58,15 +58,17 @@ def print_review(config: Dict[str, Any]):
     enabled_phases = [name for name, enabled in phases.items() if enabled]
     disabled_phases = [name for name, enabled in phases.items() if not enabled]
     
-    print(f"\n✅ ENABLED PHASES ({len(enabled_phases)}/7)")
+    print(f"\n✅ ENABLED PHASES ({len(enabled_phases)}/9)")
     phase_names = {
         'subdomain_discovery': 'Phase 1: Subdomain Discovery',
-        'port_scanning': 'Phase 2: Port Scanning',
-        'endpoint_discovery': 'Phase 3: Endpoint Discovery',
-        'tech_detection': 'Phase 4: Technology Detection',
-        'js_analysis': 'Phase 5: JavaScript Analysis',
-        'param_fuzzing': 'Phase 6: Parameter Fuzzing',
-        'verification': 'Phase 7: Vulnerability Verification'
+        'waf_detection': 'Phase 2: WAF Detection',         # NEW
+        'cloud_enumeration': 'Phase 3: Cloud Enumeration', # NEW
+        'port_scanning': 'Phase 4: Port Scanning',
+        'endpoint_discovery': 'Phase 5: Endpoint Discovery',
+        'tech_detection': 'Phase 6: Technology Detection',
+        'js_analysis': 'Phase 7: JavaScript Analysis',
+        'param_fuzzing': 'Phase 8: Parameter Fuzzing',
+        'verification': 'Phase 9: Vulnerability Verification'
     }
     
     for phase in enabled_phases:
@@ -148,12 +150,15 @@ def confirm_execution() -> bool:
         else:
             print("Please enter 'y' (yes), 'n' (no), or 'review'")
 
-def build_command_line_args(config: Dict[str, Any]) -> list:
+def build_command_line_args(config: Dict[str, Any], config_file_path: str) -> list:
     """Convert config to command-line arguments for scanner.py"""
     args = []
     
     # Add mode (always deep for config file)
     args.append('deep')
+    
+    # Pass the config file path directly!
+    args.extend(['--config', config_file_path])
     
     # Add targets
     for target in config.get('targets', []):
@@ -171,6 +176,10 @@ def build_command_line_args(config: Dict[str, Any]) -> list:
     phases = config.get('phases', {})
     if not phases.get('subdomain_discovery', True):
         args.append('--skip-subdomains')
+    if not phases.get('waf_detection', True):
+        args.append('--skip-waf')
+    if not phases.get('cloud_enumeration', True):
+        args.append('--skip-cloud')
     if not phases.get('port_scanning', True):
         args.append('--skip-ports')
     if not phases.get('endpoint_discovery', True):
@@ -221,7 +230,7 @@ def main():
         break
     
     # Build command line args
-    args = build_command_line_args(config)
+    args = build_command_line_args(config, config_file)
     
     print("\n🚀 Starting scan with configuration:")
     print(f"   Command: python scanner.py {' '.join(args)}\n")

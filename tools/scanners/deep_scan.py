@@ -46,9 +46,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import time
 import traceback
+import yaml  # Added yaml support
 
 # Add tools directory to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Add tools directory to path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Import all scanner modules
 from utils.config import get_amazon_config, get_shopify_config, get_anduril_config, AmazonConfig, ShopifyConfig, AndurilConfig
@@ -64,6 +66,8 @@ from discovery.endpoint_discovery import (
 from analysis.tech_detection import TechDetector, AmazonTechDetector, ShopifyTechDetector
 from analysis.js_analyzer import JSAnalyzer, AmazonJSAnalyzer, ShopifyJSAnalyzer
 from analysis.param_fuzzer import ParamFuzzer, AmazonParamFuzzer, ShopifyParamFuzzer, FUZZ_PAYLOADS
+from discovery.cloud_enum import CloudEnumerator, CloudEnumResult
+from techniques.waf_evasion import WAFEvader, WAFInfo
 
 
 # Global flag for graceful shutdown
@@ -102,6 +106,8 @@ class DeepScanConfig:
     skip_tech: bool = False
     skip_js: bool = False
     skip_fuzz: bool = False
+    skip_cloud: bool = False  # NEW
+    skip_waf: bool = False    # NEW
     skip_recursive: bool = False
     skip_verification: bool = False  # NEW: Skip vulnerability verification
 
@@ -127,6 +133,73 @@ class DeepScanConfig:
     verbose: bool = True
     save_json: bool = True
     save_txt: bool = True
+
+    # Configuration file
+    config_file: Optional[Path] = None
+    
+    # Overrides from config file
+    custom_headers: Dict[str, str] = field(default_factory=dict)
+    custom_rate_limit: float = 0.0
+    custom_request_delay: float = 0.0
+    custom_timeout: int = 0
+    
+    def load_from_yaml(self):
+        """Load configuration from YAML file"""
+        if not self.config_file or not self.config_file.exists():
+            return
+            
+        try:
+            with open(self.config_file, 'r') as f:
+                data = yaml.safe_load(f)
+                
+            # Override basics if not set via CLI
+            if not self.targets and 'targets' in data:
+                self.targets = data['targets']
+                
+            if 'program' in data and data['program']:
+                 self.program = data['program']
+                 
+            if 'h1_username' in data and data['h1_username']:
+                 self.username = data['h1_username']
+
+            # Load overrides
+            if 'custom_headers' in data:
+                self.custom_headers = data['custom_headers']
+                
+            if 'rate_limit' in data:
+                self.custom_rate_limit = float(data['rate_limit'])
+                
+            if 'request_delay' in data:
+                self.custom_request_delay = float(data['request_delay'])
+                
+            if 'request_timeout' in data:
+                self.custom_timeout = int(data['request_timeout'])
+
+            # Load Limits
+            if 'limits' in data:
+                limits = data['limits']
+                self.max_subdomains = limits.get('max_subdomains', 0)
+                self.max_endpoints = limits.get('max_endpoints', 0)
+                self.max_js_files = limits.get('max_js_files', 0)
+                self.max_fuzz_urls = limits.get('max_fuzz_urls', 0)
+
+            # Load phases (optional - CLI usually overrides, but we can respect config if CLI didn't disable)
+            if 'phases' in data:
+                p = data['phases']
+                # Only disable if config says False. If config says True, keep current state (False by default in CLI args means enabled in logic)
+                # Actually, our config flags are "skip_X".
+                if p.get('subdomain_discovery') is False: self.skip_subdomains = True
+                if p.get('port_scanning') is False: self.skip_ports = True
+                if p.get('endpoint_discovery') is False: self.skip_endpoints = True
+                if p.get('tech_detection') is False: self.skip_tech = True
+                if p.get('js_analysis') is False: self.skip_js = True
+                if p.get('param_fuzzing') is False: self.skip_fuzz = True
+                if p.get('verification') is False: self.skip_verification = True
+                if p.get('cloud_enumeration') is False: self.skip_cloud = True
+                if p.get('waf_detection') is False: self.skip_waf = True
+
+        except Exception as e:
+            print(f"[!] Error loading config file: {e}")
 
 
 @dataclass
@@ -157,6 +230,12 @@ class DeepScanResult:
     secrets_found: List[Dict] = field(default_factory=list)
     dom_sinks: List[Dict] = field(default_factory=list)
 
+    # Cloud Enumeration
+    cloud_buckets: List[Dict] = field(default_factory=list)
+
+    # WAF Detection
+    waf_info: Dict[str, Any] = field(default_factory=dict)
+
     # Vulnerability findings
     vulnerabilities: List[Dict] = field(default_factory=list)
     potential_issues: List[Dict] = field(default_factory=list)
@@ -181,6 +260,10 @@ class DeepScanner:
     """
 
     def __init__(self, config: DeepScanConfig):
+        # Load from file if specified
+        if config.config_file:
+             config.load_from_yaml()
+             
         self.config = config
         self.results: Dict[str, DeepScanResult] = {}
 
@@ -192,6 +275,8 @@ class DeepScanner:
             self.tech_detector = AmazonTechDetector(config.username)
             self.js_analyzer = AmazonJSAnalyzer(config.username)
             self.param_fuzzer = AmazonParamFuzzer(config.username)
+            self.cloud_enumerator = CloudEnumerator()
+            self.waf_evader = WAFEvader()
             self.scope_validator = AmazonScopeValidator(self.program_config)
         elif config.program == "shopify":
             self.program_config = get_shopify_config(config.username)
@@ -200,6 +285,8 @@ class DeepScanner:
             self.tech_detector = ShopifyTechDetector(config.username)
             self.js_analyzer = ShopifyJSAnalyzer(config.username)
             self.param_fuzzer = ShopifyParamFuzzer(config.username)
+            self.cloud_enumerator = CloudEnumerator()
+            self.waf_evader = WAFEvader()
             self.scope_validator = ShopifyScopeValidator(self.program_config)
         elif config.program == "anduril":
             # Anduril Industries - use generic scanners with Anduril config
@@ -209,6 +296,8 @@ class DeepScanner:
             self.tech_detector = TechDetector()
             self.js_analyzer = JSAnalyzer()
             self.param_fuzzer = ParamFuzzer()
+            self.cloud_enumerator = CloudEnumerator()
+            self.waf_evader = WAFEvader()
             self.scope_validator = None  # No custom scope validator yet
         else:
             self.program_config = None
@@ -217,7 +306,33 @@ class DeepScanner:
             self.tech_detector = TechDetector()
             self.js_analyzer = JSAnalyzer()
             self.param_fuzzer = ParamFuzzer()
+            self.cloud_enumerator = CloudEnumerator()
+            self.waf_evader = WAFEvader()
             self.scope_validator = None
+
+        # Apply Configuration Overrides
+        if self.program_config:
+            if config.custom_rate_limit > 0:
+                self.program_config.rate_limit = config.custom_rate_limit
+            if config.custom_request_delay > 0:
+                self.program_config.request_delay = config.custom_request_delay
+            if config.custom_timeout > 0:
+                self.program_config.request_timeout = config.custom_timeout
+            
+            # Apply headers - simple monkeypatch if supported, or via os.environ for some tools
+            # Ideally, ProgramConfig should support custom_headers property.
+            # For Anduril it does. For Amazon/Shopify it might not have the field.
+            # We can use our os.environ hack from config_scanner as a fallback, 
+            # BUT we should also try to set it on the config object if possible.
+            if config.custom_headers:
+                # Add to program config if it supports it
+                if hasattr(self.program_config, 'custom_headers') and isinstance(self.program_config.custom_headers, dict):
+                     self.program_config.custom_headers.update(config.custom_headers)
+                
+                # Also set in environment for tools that check it
+                import os
+                for k, v in config.custom_headers.items():
+                    os.environ[f"SCANNER_HEADER_{k}"] = str(v)
 
         # Create output directory
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -231,12 +346,13 @@ class DeepScanner:
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  PHASES:                                                                      ║
 ║  [1] Subdomain Discovery     - 8+ passive sources + DNS brute-force          ║
-║  [2] Port Scanning           - 22+ common ports on all live hosts            ║
-║  [3] Endpoint Discovery      - robots.txt, sitemap, path brute-force         ║
-║  [4] Technology Detection    - Fingerprinting & CVE mapping                  ║
-║  [5] JavaScript Analysis     - Secrets, API endpoints, DOM XSS sinks         ║
-║  [6] Parameter Fuzzing       - XSS, SQLi, SSRF, LFI, RCE, SSTI              ║
-║  [7] Recursive Discovery     - Find subdomains of subdomains                 ║
+║  [2] WAF Detection & Evasion - Identify firewall & sugggest bypasses         ║
+║  [3] Cloud Enumeration       - S3, Azure, GCP bucket discovery               ║
+║  [4] Port Scanning           - 22+ common ports on all live hosts            ║
+║  [5] Endpoint Discovery      - robots.txt, sitemap, path brute-force         ║
+║  [6] Technology Detection    - Fingerprinting & CVE mapping                  ║
+║  [7] JavaScript Analysis     - Recursive endpoint & secret mining            ║
+║  [8] Parameter Fuzzing       - XSS, SQLi, SSRF, LFI, RCE, SSTI              ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  Press Ctrl+C to gracefully stop scanning (current phase will complete)      ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -343,18 +459,89 @@ class DeepScanner:
             traceback.print_exc()
             return [target]
 
-    # ======================== PHASE 2: PORT SCANNING ========================
+    # ======================== PHASE 2: WAF DETECTION ========================
+
+    def phase_waf_detection(self, target: str, result: DeepScanResult):
+        """Phase 2: Detect WAF protection"""
+        if self.config.skip_waf:
+            self.log("WAF detection skipped", "WARNING")
+            return
+
+        self.phase_header(2, "WAF DETECTION", target)
+        
+        url = f"https://{target}"
+        self.log(f"Fingerprinting WAF for {url}...")
+        
+        try:
+            info = self.waf_evader.detect_waf(url)
+            
+            result.waf_info = {
+                "detected": info.detected,
+                "name": info.name,
+                "confidence": info.confidence,
+                "bypass_techniques": info.bypass_techniques
+            }
+            
+            if info.detected:
+                self.log(f"  [!] WAF DETECTED: {info.name} (Confidence: {info.confidence})", "WARNING")
+                if info.bypass_techniques:
+                    self.log(f"  Recommended Evasion: {', '.join(info.bypass_techniques)}")
+            else:
+                self.log("  No WAF detected.", "SUCCESS")
+                
+        except Exception as e:
+            result.errors.append(f"WAF detection error: {e}")
+            self.log(f"WAF Check Error: {e}", "ERROR")
+
+
+    # ======================== PHASE 3: CLOUD ENUMERATION ========================
+
+    def phase_cloud_enumeration(self, target: str, result: DeepScanResult):
+        """Phase 3: Enumerate cloud storage assets"""
+        if self.config.skip_cloud:
+            self.log("Cloud enumeration skipped", "WARNING")
+            return
+
+        self.phase_header(3, "CLOUD ENUMERATION", target)
+        
+        try:
+            enum_res = self.cloud_enumerator.enumerate(target)
+            
+            for bucket in enum_res.buckets:
+                bucket_dict = {
+                    "name": bucket.name,
+                    "provider": bucket.provider,
+                    "url": bucket.url,
+                    "permissions": bucket.permissions,
+                    "auth_required": bucket.auth_required,
+                    "context": bucket.context
+                }
+                result.cloud_buckets.append(bucket_dict)
+                
+                if not bucket.auth_required and "list" in bucket.permissions:
+                    self.log(f"  [!!!] PUBLIC LISTABLE BUCKET: {bucket.url}", "FINDING")
+                elif not bucket.auth_required:
+                    self.log(f"  [!] Found Public Bucket: {bucket.url}", "WARNING")
+                else:
+                    self.log(f"  [+] Found Bucket (Auth Req): {bucket.url}")
+
+            if not enum_res.buckets:
+                self.log("  No exposed buckets found.")
+                
+        except Exception as e:
+             result.errors.append(f"Cloud enum error: {e}")
+             self.log(f"Cloud Enum Error: {e}", "ERROR")
 
     def phase_port_scanning(self, targets: List[str], result: DeepScanResult):
         """
-        Phase 2: Port scanning on all alive hosts
+        Phase 4: Port scanning on all alive hosts
         Scans 22+ common ports (web, db, ssh, ftp, etc.)
         """
         if self.config.skip_ports:
             self.log("Port scanning skipped", "WARNING")
             return
 
-        self.phase_header(2, "PORT SCANNING", f"{len(targets)} hosts")
+        self.phase_header(4, "PORT SCANNING", f"{len(targets)} hosts")
 
         if self.check_shutdown():
             return
@@ -387,7 +574,7 @@ class DeepScanner:
 
     def phase_endpoint_discovery(self, targets: List[str], result: DeepScanResult) -> List[str]:
         """
-        Phase 3: Comprehensive endpoint discovery
+        Phase 5: Comprehensive endpoint discovery
         - robots.txt, sitemap.xml parsing
         - Path brute-forcing with 100+ common paths
         - HTML link extraction
@@ -397,7 +584,7 @@ class DeepScanner:
             self.log("Endpoint discovery skipped", "WARNING")
             return []
 
-        self.phase_header(3, "ENDPOINT DISCOVERY", f"{len(targets)} targets")
+        self.phase_header(5, "ENDPOINT DISCOVERY", f"{len(targets)} targets")
 
         if self.check_shutdown():
             return []
@@ -456,14 +643,14 @@ class DeepScanner:
 
     def phase_tech_detection(self, targets: List[str], result: DeepScanResult):
         """
-        Phase 4: Technology fingerprinting
+        Phase 6: Technology fingerprinting
         Detects web servers, frameworks, CMS, libraries, and maps to known CVEs
         """
         if self.config.skip_tech:
             self.log("Technology detection skipped", "WARNING")
             return
 
-        self.phase_header(4, "TECHNOLOGY DETECTION", f"{len(targets)} targets")
+        self.phase_header(6, "TECHNOLOGY DETECTION", f"{len(targets)} targets")
 
         if self.check_shutdown():
             return
@@ -513,7 +700,7 @@ class DeepScanner:
 
     def phase_js_analysis(self, targets: List[str], js_files: List[str], result: DeepScanResult):
         """
-        Phase 5: Deep JavaScript analysis
+        Phase 7: Deep JavaScript analysis (Recursive)
         - Extract API endpoints from JS
         - Find secrets and API keys
         - Detect DOM XSS sinks
@@ -523,7 +710,7 @@ class DeepScanner:
             self.log("JavaScript analysis skipped", "WARNING")
             return
 
-        self.phase_header(5, "JAVASCRIPT ANALYSIS", f"{len(targets)} targets, {len(js_files)} JS files")
+        self.phase_header(7, "JAVASCRIPT ANALYSIS", f"{len(targets)} targets, {len(js_files)} JS files")
 
         if self.check_shutdown():
             return
@@ -541,7 +728,12 @@ class DeepScanner:
             self.log(f"Analyzing JavaScript [{i+1}/{len(targets)}]: {url}")
 
             try:
-                js_result = self.js_analyzer.analyze_url(url)
+                if not self.config.skip_recursive:
+                     self.log(f"  [RECURSIVE] Starting deep JS analysis (depth=2)...")
+                     js_result = self.js_analyzer.recursive_analyze(url, max_depth=2)
+                else:
+                     js_result = self.js_analyzer.analyze_url(url)
+                     
                 result.js_files_analyzed += len(js_result.js_files)
 
                 # Collect secrets
@@ -617,7 +809,7 @@ class DeepScanner:
         if self.config.max_fuzz_urls > 0:
             urls_to_fuzz = list(urls_to_fuzz)[:self.config.max_fuzz_urls]
 
-        self.phase_header(6, "PARAMETER FUZZING", f"{len(urls_to_fuzz)} URLs")
+        self.phase_header(8, "PARAMETER FUZZING", f"{len(urls_to_fuzz)} URLs")
 
         if self.check_shutdown():
             return
@@ -676,35 +868,41 @@ class DeepScanner:
                 result.scan_end = datetime.utcnow().isoformat()
                 return result
 
-            # Phase 2: Port Scanning
+            # Phase 2: WAF Detection
+            self.phase_waf_detection(target, result)
+            
+            # Phase 3: Cloud Enumeration
+            self.phase_cloud_enumeration(target, result)
+
+            # Phase 4: Port Scanning
             self.phase_port_scanning(alive_targets, result)
 
             if self.check_shutdown():
                 result.scan_end = datetime.utcnow().isoformat()
                 return result
 
-            # Phase 3: Endpoint Discovery
+            # Phase 5: Endpoint Discovery
             js_files = self.phase_endpoint_discovery(alive_targets, result)
 
             if self.check_shutdown():
                 result.scan_end = datetime.utcnow().isoformat()
                 return result
 
-            # Phase 4: Technology Detection
+            # Phase 6: Technology Detection
             self.phase_tech_detection(alive_targets, result)
 
             if self.check_shutdown():
                 result.scan_end = datetime.utcnow().isoformat()
                 return result
 
-            # Phase 5: JavaScript Analysis
+            # Phase 7: JavaScript Analysis
             self.phase_js_analysis(alive_targets, js_files, result)
 
             if self.check_shutdown():
                 result.scan_end = datetime.utcnow().isoformat()
                 return result
 
-            # Phase 6: Parameter Fuzzing
+            # Phase 8: Parameter Fuzzing
             self.phase_param_fuzzing(alive_targets, result)
 
         except Exception as e:
@@ -796,8 +994,18 @@ class DeepScanner:
                         "dom_sinks": len(result.dom_sinks),
                         "vulnerabilities": len(result.vulnerabilities),
                         "potential_issues": len(result.potential_issues),
+                        "cloud_buckets": len(result.cloud_buckets),
+                        "waf_detected": result.waf_info.get("detected", False),
                         "total_requests": result.total_requests,
                     },
+                    "waf_info": result.waf_info,
+                    "cloud_buckets": [
+                         {
+                            "name": b["name"],
+                            "url": b["url"],
+                            "permissions": b["permissions"]
+                         } for b in result.cloud_buckets
+                    ],
                     "phases_completed": result.phases_completed,
                     "subdomains": result.subdomains,
                     "open_ports": result.open_ports,

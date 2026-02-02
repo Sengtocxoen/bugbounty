@@ -101,6 +101,11 @@ For more help: python scanner.py <mode> --help
                             help='Skip port scanning')
     deep_parser.add_argument('--verbose', action='store_true',
                             help='Verbose output')
+    deep_parser.add_argument('--skip-cloud', action='store_true',
+                            help='Skip cloud bucket enumeration')
+    deep_parser.add_argument('--skip-waf', action='store_true',
+                            help='Skip WAF detection')
+    deep_parser.add_argument('-c', '--config', help='Path to configuration file (e.g., scan_config.yaml)')
     
     # === RECON MODE ===
     recon_parser = subparsers.add_parser(
@@ -204,7 +209,10 @@ def run_deep_mode(args):
         username=args.username,  # Not program_username
         skip_ports=args.skip_ports if hasattr(args, 'skip_ports') else False,
         skip_endpoints=args.skip_web if hasattr(args, 'skip_web') else False,
+        skip_cloud=args.skip_cloud if hasattr(args, 'skip_cloud') else False,
+        skip_waf=args.skip_waf if hasattr(args, 'skip_waf') else False,
         verbose=args.verbose if hasattr(args, 'verbose') else True,
+        config_file=Path(args.config) if args.config else None,
     )
     
     # Run scan

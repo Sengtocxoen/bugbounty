@@ -21,28 +21,43 @@ A comprehensive, automated bug bounty reconnaissance and vulnerability scanning 
 
 ## 🛠️ Usage
 
-### 1. Cloud Storage Enumeration
-Find hidden buckets associated with a target domain.
+### 1. Unified CLI (`scanner.py`)
+The main entry point for all scanning modes.
+
 ```bash
-python -m tools.discovery.cloud_enum example.com
+# Deep Scan (Comprehensive)
+python scanner.py deep example.com -p amazon
+
+# Intelligent Scan (Smart duplicates detection)
+python scanner.py intelligent example.com -s subdomains.txt
+
+# Asset Discovery Only (Fast)
+python scanner.py discover example.com
+
+# Wiz-style Reconnaissance
+python scanner.py recon example.com --thorough
 ```
 
-### 2. Recursive JavaScript Analysis
-Deep analysis of JS files to find endpoints and secrets.
+### 2. Configuration-Driven Scan (Recommended)
+Use a YAML file to define exact scan parameters, targets, headers, and phases.
+
 ```bash
-python -m tools.analysis.js_analyzer https://example.com --recursive --depth 2
+# Review and run with config
+python config_scanner.py scan_config.yaml
+
+# Or directly via CLI
+python scanner.py deep -c scan_config.yaml
 ```
 
-### 3. WAF Detection & Evasion
-Check for WAFs and generate evasion payloads.
-```bash
-python -m tools.techniques.waf_evasion --url https://example.com
-```
+### 3. Advanced Options
+Control specific phases and behaviors:
 
-### 4. Full Scan (Integrated)
-Run the complete scanner with all modules enabled.
 ```bash
-python scanner.py --config scan_config.yaml
+# Skip specific phases
+python scanner.py deep example.com --skip-cloud --skip-waf --skip-ports
+
+# Custom Identity
+python scanner.py deep example.com -u my_h1_username --program shopify
 ```
 
 ## 📂 Project Structure
