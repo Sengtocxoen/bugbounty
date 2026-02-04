@@ -836,9 +836,18 @@ class DeepScanner:
                         "severity": finding.severity,
                         "confidence": finding.confidence,
                         "response_code": finding.response_code,
+                        # Detailed vulnerability information
+                        "vuln_name": finding.vuln_name,
+                        "description": finding.description,
+                        "impact": finding.impact,
+                        "exploit_scenario": finding.exploit_scenario,
+                        "remediation": finding.remediation,
+                        "cwe": finding.cwe,
+                        "cvss": finding.cvss,
+                        "references": finding.references,
                     }
                     result.vulnerabilities.append(vuln_entry)
-                    self.log(f"  [!!!] {finding.severity.upper()} {finding.vuln_type}: {finding.parameter}", "FINDING")
+                    self.log(f"  [!!!] {finding.severity.upper()} {finding.vuln_name or finding.vuln_type}: {finding.parameter}", "FINDING")
 
             except Exception as e:
                 result.errors.append(f"Fuzzing error on {url}: {str(e)}")
@@ -1046,17 +1055,76 @@ class DeepScanner:
                 f.write(f"Vulnerabilities: {len(result.vulnerabilities)}\n")
                 f.write(f"Potential Issues: {len(result.potential_issues)}\n\n")
 
-                # Vulnerabilities
+                # Vulnerabilities  
                 if result.vulnerabilities:
                     f.write("-"*40 + "\n")
                     f.write("VULNERABILITIES FOUND\n")
-                    f.write("-"*40 + "\n")
+                    f.write("-"*40 + "\n\n")
+                    
+                    # Group by vulnerability type for better organization
+                    grouped_vulns = {}
                     for vuln in result.vulnerabilities:
-                        f.write(f"\n[{vuln['severity'].upper()}] {vuln['vuln_type']}\n")
-                        f.write(f"  URL: {vuln['url']}\n")
-                        f.write(f"  Parameter: {vuln['parameter']}\n")
-                        f.write(f"  Payload: {vuln['payload']}\n")
-                        f.write(f"  Confidence: {vuln['confidence']}\n")
+                        vtype = vuln.get('vuln_type', 'unknown')
+                        if vtype not in grouped_vulns:
+                            grouped_vulns[vtype] = []
+                        grouped_vulns[vtype].append(vuln)
+                    
+                    # Display each vulnerability type
+                    for vtype, vulns in grouped_vulns.items():
+                        f.write(f"\n{'='*80}\n")
+                        first_vuln = vulns[0]
+                        vuln_name = first_vuln.get('vuln_name', vtype.upper())
+                        cwe = first_vuln.get('cwe', '')
+                        cvss = first_vuln.get('cvss', 0)
+                        
+                        f.write(f"{vuln_name}\n")
+                        if cwe or cvss:
+                            f.write(f"CWE: {cwe} | CVSS: {cvss} | Instances: {len(vulns)}\n")
+                        f.write(f"{'='*80}\n\n")
+                        
+                        # Description
+                        if first_vuln.get('description'):
+                            f.write(f"DESCRIPTION:\n")
+                            f.write(f"{first_vuln['description']}\n\n")
+                        
+                        # Impact
+                        if first_vuln.get('impact'):
+                            f.write(f"IMPACT:\n")
+                            f.write(f"{first_vuln['impact']}\n\n")
+                        
+                        # Exploitation Scenario
+                        if first_vuln.get('exploit_scenario'):
+                            f.write(f"EXPLOITATION SCENARIO:\n")
+                            f.write(f"{first_vuln['exploit_scenario']}\n\n")
+                        
+                        # Remediation
+                        if first_vuln.get('remediation'):
+                            f.write(f"REMEDIATION:\n")
+                            f.write(f"{first_vuln['remediation']}\n\n")
+                        
+                        # Affected Instances (show first 5)
+                        f.write(f"AFFECTED INSTANCES (showing {min(5, len(vulns))} of {len(vulns)}):\n")
+                        f.write("-" * 80 + "\n")
+                        for i, vuln in enumerate(vulns[:5], 1):
+                            f.write(f"\nInstance #{i}:\n")
+                            f.write(f"  Severity:   [{vuln['severity'].upper()}]\n")
+                            f.write(f"  URL:        {vuln['url']}\n")
+                            f.write(f"  Parameter:  {vuln['parameter']}\n")
+                            f.write(f\" Payload:     {vuln['payload']}\n")
+                            f.write(f"  Evidence:   {vuln.get('evidence', 'N/A')}\n")
+                            f.write(f"  Confidence: {vuln['confidence']}\n")
+                        
+                        if len(vulns) > 5:
+                            f.write(f"\n... and {len(vulns) - 5} more instances\n")
+                        
+                        # References
+                        if first_vuln.get('references'):
+                            f.write(f"\nREFERENCES:\n")
+                            for ref in first_vuln['references']:
+                                f.write(f"  - {ref}\n")
+                        
+                        f.write("\n")
+                    
                     f.write("\n")
 
                 # Secrets

