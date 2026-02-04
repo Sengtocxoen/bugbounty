@@ -1,0 +1,170 @@
+# Bug Bounty Scanner - Maximum Capabilities Configuration
+# This is an EXAMPLE showing ALL features enabled for maximum bug discovery
+
+# =============================================================================
+# PROGRAM & USER INFO
+# =============================================================================
+
+program: null                    # "amazon", "shopify", "anduril", or null
+h1_username: "your_username"
+
+# =============================================================================
+# TARGETS
+# =============================================================================
+
+targets:
+  - "example.com"
+
+# =============================================================================
+# CUSTOM HEADERS
+# =============================================================================
+
+custom_headers: {}
+
+# =============================================================================
+# RATE LIMITING
+# =============================================================================
+
+rate_limit: 10                   # Increased for faster scans
+request_delay: 0.1
+request_timeout: 30
+
+# =============================================================================
+# SCAN PHASES
+# =============================================================================
+
+phases:
+  subdomain_discovery: true
+  port_scanning: true
+  endpoint_discovery: true
+  tech_detection: true
+  js_analysis: true
+  param_fuzzing: true
+  verification: true
+
+# =============================================================================
+# ADVANCED FEATURES - ALL ENABLED FOR MAXIMUM CAPABILITIES
+# =============================================================================
+
+advanced_features:
+  # Response Deduplication - 60% faster scans
+  response_dedup:
+    enabled: true
+    similarity_threshold: 0.85
+  
+  # Secret Validation - 90% less false positives
+  secret_validation:
+    enabled: true
+    validate_aws: true
+    validate_firebase: true
+    validate_github: true
+    validate_google: true
+    validate_slack: true
+  
+  # GitHub/GitLab Dorking
+  github_dorking:
+    enabled: true                # ⚠️ Set your token below
+    github_token: "YOUR_GITHUB_TOKEN_HERE"
+    gitlab_token: null
+    max_results: 100
+  
+  # GraphQL Introspection
+  graphql:
+    enabled: true
+    auto_detect: true
+    introspect_authenticated: true
+  
+  # Advanced Recursive Fuzzing
+  fuzzing:
+    recursive: true
+    max_depth: 3
+    header_fuzz: true
+    soft_404_detection: true
+    wordlist: "wordlists/common.txt"
+  
+  # Vulnerability Chaining - Auto-escalate to Critical
+  vuln_chaining:
+    enabled: true
+    auto_escalate: true
+    chain_ssrf_idor: true
+    chain_xss_csrf: true
+    chain_lfi_rce: true
+  
+  # Enhanced WAF Evasion
+  waf_evasion:
+    proxy_rotation: false        # Enable if you have proxies
+    proxy_list: []
+      # - "http://proxy1:8080"
+      # - "http://proxy2:8080"
+    tamper_payloads: true
+    adaptive_delay: true
+
+# =============================================================================
+# LIMITS (0 = unlimited)
+# =============================================================================
+
+limits:
+  max_subdomains: 0              # No limits for maximum discovery
+  max_endpoints: 0
+  max_js_files: 0
+  max_fuzz_urls: 0
+
+# =============================================================================
+# PORT SCANNING
+# =============================================================================
+
+port_scan:
+  full_scan: true
+  custom_ports: [8080, 8443, 3000, 5000]
+
+# =============================================================================
+# VERIFICATION
+# =============================================================================
+
+verification:
+  threads: 20                    # Increased threads for speed
+  verify_only_high_priority: false
+  test_default_credentials: false
+
+# =============================================================================
+# OUTPUT
+# =============================================================================
+
+output:
+  directory: "results"
+  save_json: true
+  save_txt: true
+  save_html: true
+  verbose: true
+
+# =============================================================================
+# SAFETY
+# =============================================================================
+
+safety:
+  confirm_before_run: true
+  show_review: true
+  max_threads: 20
+
+# =============================================================================
+# NOTES
+# =============================================================================
+
+notes: |
+  Maximum Capabilities Configuration Example
+  
+  ✅ ALL advanced features enabled
+  ✅ Response deduplication (60% faster)
+  ✅ Secret validation (90% accuracy)
+  ✅ GitHub dorking (requires token)
+  ✅ GraphQL introspection
+  ✅ Recursive fuzzing (depth 3)
+  ✅ Vulnerability chaining
+  ✅ Enhanced WAF evasion
+  
+  Remember to:
+  - Set your GitHub token if using dorking
+  - Adjust rate_limit based on target
+  - Set proxy_list if using proxy rotation
+  - Review before running
+  - Follow program scope and rules

