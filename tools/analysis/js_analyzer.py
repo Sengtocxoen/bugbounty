@@ -30,6 +30,7 @@ except ImportError:
 
 from utils.config import get_amazon_config, get_shopify_config
 from utils.secret_patterns import SecretDetector, ALL_SECRET_PATTERNS
+from utils.secret_validator import SecretValidator, ValidationStatus
 
 
 @dataclass
@@ -176,16 +177,23 @@ PARAM_PATTERNS = [
 class JSAnalyzer:
     """Analyze JavaScript files for security issues"""
 
-    def __init__(self, rate_limit: float = 5.0, user_agent: str = "BugBountyResearcher"):
+    def __init__(self, rate_limit: float = 5.0, user_agent: str = "BugBountyResearcher", validate_secrets: bool = False):
         self.rate_limit = rate_limit
         self.min_interval = 1.0 / rate_limit
         self.last_request = 0.0
         self.lock = threading.Lock()
         self.user_agent = user_agent
+        self.validate_secrets = validate_secrets
         self.session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
         self.session.headers.update({'User-Agent': user_agent})
+        
+        # Initialize secret validator if needed
+        if validate_secrets:
+            self.secret_validator = SecretValidator()
+        else:
+            self.secret_validator = None
 
     def _rate_limit_wait(self):
         """Wait to respect rate limit"""
@@ -221,7 +229,7 @@ class JSAnalyzer:
         detector = SecretDetector(ALL_SECRET_PATTERNS)
         detected_secrets = detector.scan(js_content, context_chars=50)
         
-        # Convert to SecretFinding objects
+        # Convert to SecretFinding objects and optionally validate
         for secret in detected_secrets:
             finding = SecretFinding(
                 type=secret['type'],
@@ -230,6 +238,16 @@ class JSAnalyzer:
                 file=source_file,
                 severity=secret['severity'],
             )
+            
+            # Validate secret if enabled
+            if self.secret_validator:
+                validation = self.secret_validator.validate_secret(secret['type'], secret['value'])
+                if validation.status == ValidationStatus.VALID:
+                    finding.severity = 'critical'  # Upgrade severity for validated secrets
+                    print(f"      [VALIDATED] {secret['type']} is ACTIVE!")
+                elif validation.status == ValidationStatus.INVALID:
+                    continue  # Skip invalid secrets
+            
             findings.append(finding)
         
         return findings
