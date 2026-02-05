@@ -3,3 +3,5 @@ tools/__pycache__/
 __pycache__/
 Feature.md
 books/
+scan_config_maximum.yaml
+scan_config.yaml

@@ -50,7 +50,75 @@ python scanner.py discover example.com --github-dork
 python scanner.py recon example.com --thorough
 ```
 
-### 2. Configuration-Driven Scan (Recommended)
+### 2. Configuration Setup
+
+The scanner uses **YAML configuration files** to define scan parameters. This allows you to easily create program-specific configs without modifying code.
+
+#### Creating Your First Config
+
+1. **Copy the template**:
+   ```bash
+   copy scan_config.yaml.test scan_config.yaml
+   ```
+
+2. **Edit the configuration**:
+   Open `scan_config.yaml` and customize:
+   - `program`: Program name (e.g., `amazon`, `shopify`, `doordash`, or `null` for generic)
+   - `h1_username`: Your HackerOne username
+   - `targets`: List of domains to scan
+   - `custom_headers`: Program-specific headers (e.g., `X-Bug-Bounty` for DoorDash)
+   - `phases`: Enable/disable scan phases
+   - `advanced_features`: Configure response dedup, secret validation, etc.
+
+3. **Run the scan**:
+   ```bash
+   python scanner.py deep -t target.com --program yourprogram -c scan_config.yaml
+   ```
+
+#### Creating Program-Specific Configs
+
+For different programs, create separate config files:
+
+```bash
+# DoorDash configuration
+copy scan_config.yaml.test scan_config_doordash.yaml
+
+# Amazon VRP configuration
+copy scan_config.yaml.test scan_config_amazon.yaml
+
+# Custom program configuration
+copy scan_config.yaml.test scan_config_myprogram.yaml
+```
+
+Then customize each file with program-specific settings:
+
+**Example: DoorDash** (`scan_config_doordash.yaml`):
+```yaml
+program: "doordash"
+h1_username: "your_h1_username"  # IMPORTANT: Replace this!
+
+targets:
+  - "www.doordash.com"
+
+custom_headers:
+  X-Bug-Bounty: "your_h1_username"  # Required by DoorDash
+
+rate_limit: 3  # Conservative rate limiting
+```
+
+**Example: Amazon VRP** (`scan_config_amazon.yaml`):
+```yaml
+program: "amazon"
+h1_username: "amazonvrpresearcher_yourh1username"
+
+targets:
+  - "aws.amazon.com"
+  - "signin.aws.amazon.com"
+```
+
+> **Note**: Config files (`scan_config.yaml`, `scan_config_*.yaml`) are gitignored to prevent accidentally committing sensitive information like usernames or API keys.
+
+### 3. Configuration-Driven Scan (Recommended)
 Use a YAML file to define exact scan parameters, targets, headers, and phases.
 
 ```bash
@@ -61,7 +129,7 @@ python config_scanner.py scan_config.yaml
 python scanner.py deep -c scan_config.yaml
 ```
 
-### 3. Advanced Features Usage
+### 4. Advanced Features Usage
 
 #### Secret Validation
 ```bash
@@ -111,7 +179,7 @@ chainer.add_vulnerability(idor_vuln)
 chains = chainer.detect_chains()  # SSRF+IDOR -> Critical
 ```
 
-### 4. Performance Options
+### 5. Performance Options
 Control specific phases and behaviors:
 
 ```bash
