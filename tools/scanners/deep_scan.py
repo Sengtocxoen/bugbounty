@@ -1110,7 +1110,7 @@ class DeepScanner:
                             f.write(f"  Severity:   [{vuln['severity'].upper()}]\n")
                             f.write(f"  URL:        {vuln['url']}\n")
                             f.write(f"  Parameter:  {vuln['parameter']}\n")
-                            f.write(f\" Payload:     {vuln['payload']}\n")
+                            f.write(f" Payload:     {vuln['payload']}\n")
                             f.write(f"  Evidence:   {vuln.get('evidence', 'N/A')}\n")
                             f.write(f"  Confidence: {vuln['confidence']}\n")
                         
