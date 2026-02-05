@@ -209,23 +209,13 @@ def run_deep_mode(args):
     """Run deep scanner"""
     safe_print("\n[*] Starting Deep Scanner...")
     
-    # Handle targets (can be None if not specified)
-    targets = args.targets if hasattr(args, 'targets') and args.targets else []
-    
-    if not targets:
-        safe_print("[!] Error: No targets specified. Use -t domain1 -t domain2")
-        sys.exit(1)
-    
-    print(f"Targets: {', '.join(targets)}")
-    print(f"Program: {args.program}")
-    
     from scanners.deep_scan import DeepScanner, DeepScanConfig
     
-    # Create config
+    # Create initial config with CLI arguments
     config = DeepScanConfig(
-        targets=targets,
+        targets=args.targets if hasattr(args, 'targets') and args.targets else [],
         program=args.program,
-        username=args.username,  # Not program_username
+        username=args.username,
         skip_ports=args.skip_ports if hasattr(args, 'skip_ports') else False,
         skip_endpoints=args.skip_web if hasattr(args, 'skip_web') else False,
         skip_cloud=args.skip_cloud if hasattr(args, 'skip_cloud') else False,
@@ -233,6 +223,19 @@ def run_deep_mode(args):
         verbose=args.verbose if hasattr(args, 'verbose') else True,
         config_file=Path(args.config) if args.config else None,
     )
+    
+    # Load from YAML file if specified (this will override targets if defined in config)
+    if config.config_file:
+        config.load_from_yaml()
+    
+    # Now check for targets (could come from CLI or config file)
+    if not config.targets:
+        safe_print("[!] Error: No targets specified.")
+        safe_print("    Use -t domain1 -t domain2 OR define targets in config file")
+        sys.exit(1)
+    
+    print(f"Targets: {', '.join(config.targets)}")
+    print(f"Program: {config.program or 'generic'}")
     
     # Run scan
     scanner = DeepScanner(config)
