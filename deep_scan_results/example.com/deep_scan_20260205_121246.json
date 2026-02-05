@@ -1,0 +1,592 @@
+{
+  "target": "example.com",
+  "program": "generic",
+  "scan_start": "2026-02-05T04:53:43.504330",
+  "scan_end": "2026-02-05T05:12:46.600843",
+  "summary": {
+    "subdomains_total": 19,
+    "subdomains_alive": 13,
+    "subdomains_in_scope": 0,
+    "endpoints_total": 0,
+    "endpoints_interesting": 0,
+    "js_files_analyzed": 0,
+    "secrets_found": 0,
+    "dom_sinks": 0,
+    "vulnerabilities": 0,
+    "potential_issues": 4,
+    "cloud_buckets": 5,
+    "waf_detected": true,
+    "total_requests": 0
+  },
+  "waf_info": {
+    "detected": true,
+    "name": "Cloudflare",
+    "confidence": "high",
+    "bypass_techniques": [
+      "ip_rotation",
+      "slow_rate"
+    ]
+  },
+  "cloud_buckets": [
+    {
+      "name": "example-db",
+      "url": "https://example-db.s3.amazonaws.com",
+      "permissions": [
+        "read",
+        "list"
+      ]
+    },
+    {
+      "name": "example-com",
+      "url": "https://storage.googleapis.com/example-com",
+      "permissions": [
+        "read",
+        "list"
+      ]
+    },
+    {
+      "name": "example-images",
+      "url": "https://storage.googleapis.com/example-images",
+      "permissions": [
+        "read",
+        "list"
+      ]
+    },
+    {
+      "name": "example-testing",
+      "url": "https://example-testing.s3.amazonaws.com",
+      "permissions": [
+        "read",
+        "list"
+      ]
+    },
+    {
+      "name": "example-files",
+      "url": "https://example-files.s3.amazonaws.com",
+      "permissions": [
+        "read",
+        "list"
+      ]
+    }
+  ],
+  "phases_completed": [
+    "subdomain_discovery",
+    "port_scanning",
+    "endpoint_discovery",
+    "tech_detection",
+    "js_analysis",
+    "param_fuzzing"
+  ],
+  "subdomains": {
+    "20mail2.example.com": {
+      "ip_addresses": [],
+      "is_alive": false,
+      "http_status": null,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "admin.m.testexample.com": {
+      "ip_addresses": [
+        "13.248.169.48",
+        "76.223.54.146"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "api.m.testexample.com": {
+      "ip_addresses": [
+        "13.248.169.48",
+        "76.223.54.146"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "app.m.testexample.com": {
+      "ip_addresses": [
+        "13.248.169.48",
+        "76.223.54.146"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "as207960 test intermediate - example.com": {
+      "ip_addresses": [],
+      "is_alive": false,
+      "http_status": null,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "dev.example.com": {
+      "ip_addresses": [],
+      "is_alive": false,
+      "http_status": null,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "dev.m.testexample.com": {
+      "ip_addresses": [
+        "13.248.169.48",
+        "76.223.54.146"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "example.com": {
+      "ip_addresses": [
+        "104.18.26.120",
+        "104.18.27.120"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": 200,
+      "title": "Example Domain",
+      "server": "cloudflare",
+      "technologies": [
+        "Cloudflare"
+      ],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "m.example.com": {
+      "ip_addresses": [],
+      "is_alive": false,
+      "http_status": null,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "m.m.testexample.com": {
+      "ip_addresses": [
+        "13.248.169.48",
+        "76.223.54.146"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "m.testexample.com": {
+      "ip_addresses": [
+        "13.248.169.48",
+        "76.223.54.146"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "mail.m.testexample.com": {
+      "ip_addresses": [
+        "13.248.169.48",
+        "76.223.54.146"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "products.example.com": {
+      "ip_addresses": [],
+      "is_alive": false,
+      "http_status": null,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "staging.m.testexample.com": {
+      "ip_addresses": [
+        "13.248.169.48",
+        "76.223.54.146"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "subjectname@example.com": {
+      "ip_addresses": [],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": 200,
+      "title": "Example Domain",
+      "server": "cloudflare",
+      "technologies": [
+        "Cloudflare"
+      ],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "support.example.com": {
+      "ip_addresses": [],
+      "is_alive": false,
+      "http_status": null,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "user@example.com": {
+      "ip_addresses": [],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": 200,
+      "title": "Example Domain",
+      "server": "cloudflare",
+      "technologies": [
+        "Cloudflare"
+      ],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "www.example.com": {
+      "ip_addresses": [
+        "104.18.27.120",
+        "104.18.26.120"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": 200,
+      "title": "Example Domain",
+      "server": "cloudflare",
+      "technologies": [
+        "Cloudflare"
+      ],
+      "in_scope": true,
+      "scope_reason": ""
+    },
+    "www.m.testexample.com": {
+      "ip_addresses": [
+        "13.248.169.48",
+        "76.223.54.146"
+      ],
+      "is_alive": true,
+      "http_status": 200,
+      "https_status": null,
+      "title": null,
+      "server": null,
+      "technologies": [],
+      "in_scope": true,
+      "scope_reason": ""
+    }
+  },
+  "open_ports": {
+    "admin.m.testexample.com": [
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 143,
+        "service": "IMAP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      }
+    ],
+    "api.m.testexample.com": [
+      {
+        "port": 53,
+        "service": "DNS"
+      },
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      },
+      {
+        "port": 8080,
+        "service": "HTTP-Alt"
+      }
+    ],
+    "app.m.testexample.com": [
+      {
+        "port": 25,
+        "service": "SMTP"
+      },
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      },
+      {
+        "port": 6379,
+        "service": "Redis"
+      },
+      {
+        "port": 8443,
+        "service": "HTTPS-Alt"
+      }
+    ],
+    "dev.m.testexample.com": [
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      },
+      {
+        "port": 8080,
+        "service": "HTTP-Alt"
+      },
+      {
+        "port": 8443,
+        "service": "HTTPS-Alt"
+      }
+    ],
+    "example.com": [
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      },
+      {
+        "port": 8080,
+        "service": "HTTP-Alt"
+      },
+      {
+        "port": 8443,
+        "service": "HTTPS-Alt"
+      }
+    ],
+    "m.m.testexample.com": [
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      }
+    ],
+    "m.testexample.com": [
+      {
+        "port": 53,
+        "service": "DNS"
+      },
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      }
+    ],
+    "mail.m.testexample.com": [
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      }
+    ],
+    "staging.m.testexample.com": [
+      {
+        "port": 23,
+        "service": "Telnet"
+      },
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 143,
+        "service": "IMAP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      }
+    ],
+    "www.example.com": [
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      },
+      {
+        "port": 8080,
+        "service": "HTTP-Alt"
+      },
+      {
+        "port": 8443,
+        "service": "HTTPS-Alt"
+      }
+    ],
+    "www.m.testexample.com": [
+      {
+        "port": 80,
+        "service": "HTTP"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS"
+      }
+    ]
+  },
+  "endpoints": [],
+  "api_endpoints": [],
+  "technologies": {
+    "example.com": [
+      {
+        "name": "cloudflare",
+        "category": "cdn",
+        "version": null,
+        "vuln_notes": "WAF bypass techniques may be relevant"
+      }
+    ],
+    "subjectname@example.com": [
+      {
+        "name": "cloudflare",
+        "category": "cdn",
+        "version": null,
+        "vuln_notes": "WAF bypass techniques may be relevant"
+      }
+    ],
+    "user@example.com": [
+      {
+        "name": "cloudflare",
+        "category": "cdn",
+        "version": null,
+        "vuln_notes": "WAF bypass techniques may be relevant"
+      }
+    ],
+    "www.example.com": [
+      {
+        "name": "cloudflare",
+        "category": "cdn",
+        "version": null,
+        "vuln_notes": "WAF bypass techniques may be relevant"
+      }
+    ]
+  },
+  "secrets_found": [],
+  "dom_sinks": [],
+  "vulnerabilities": [],
+  "potential_issues": [
+    {
+      "type": "technology_vulnerability",
+      "target": "example.com",
+      "technology": "cloudflare",
+      "version": null,
+      "notes": "WAF bypass techniques may be relevant",
+      "severity": "medium"
+    },
+    {
+      "type": "technology_vulnerability",
+      "target": "subjectname@example.com",
+      "technology": "cloudflare",
+      "version": null,
+      "notes": "WAF bypass techniques may be relevant",
+      "severity": "medium"
+    },
+    {
+      "type": "technology_vulnerability",
+      "target": "user@example.com",
+      "technology": "cloudflare",
+      "version": null,
+      "notes": "WAF bypass techniques may be relevant",
+      "severity": "medium"
+    },
+    {
+      "type": "technology_vulnerability",
+      "target": "www.example.com",
+      "technology": "cloudflare",
+      "version": null,
+      "notes": "WAF bypass techniques may be relevant",
+      "severity": "medium"
+    }
+  ],
+  "errors": [
+    "Fuzzing error on https://user@example.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://staging.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://subjectname@example.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://mail.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://dev.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://www.example.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://m.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://admin.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://www.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://example.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://api.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'",
+    "Fuzzing error on https://app.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'"
+  ]
+}

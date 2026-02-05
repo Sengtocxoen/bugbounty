@@ -1,0 +1,69 @@
+================================================================================
+DEEP BUG BOUNTY SCAN REPORT
+================================================================================
+
+Target: example.com
+Program: generic
+Scan Start: 2026-02-05T04:53:43.504330
+Scan End: 2026-02-05T05:12:46.600843
+Phases Completed: subdomain_discovery, port_scanning, endpoint_discovery, tech_detection, js_analysis, param_fuzzing
+
+----------------------------------------
+SUMMARY
+----------------------------------------
+Subdomains: 13/19 alive
+In Scope: 0
+Endpoints: 0 (0 interesting)
+Secrets Found: 0
+DOM Sinks: 0
+Vulnerabilities: 0
+Potential Issues: 4
+
+----------------------------------------
+OPEN PORTS
+----------------------------------------
+admin.m.testexample.com: 80(HTTP), 143(IMAP), 443(HTTPS)
+api.m.testexample.com: 53(DNS), 80(HTTP), 443(HTTPS), 8080(HTTP-Alt)
+app.m.testexample.com: 25(SMTP), 80(HTTP), 443(HTTPS), 6379(Redis), 8443(HTTPS-Alt)
+dev.m.testexample.com: 80(HTTP), 443(HTTPS), 8080(HTTP-Alt), 8443(HTTPS-Alt)
+example.com: 80(HTTP), 443(HTTPS), 8080(HTTP-Alt), 8443(HTTPS-Alt)
+m.m.testexample.com: 80(HTTP), 443(HTTPS)
+m.testexample.com: 53(DNS), 80(HTTP), 443(HTTPS)
+mail.m.testexample.com: 80(HTTP), 443(HTTPS)
+staging.m.testexample.com: 23(Telnet), 80(HTTP), 143(IMAP), 443(HTTPS)
+www.example.com: 80(HTTP), 443(HTTPS), 8080(HTTP-Alt), 8443(HTTPS-Alt)
+www.m.testexample.com: 80(HTTP), 443(HTTPS)
+
+----------------------------------------
+LIVE SUBDOMAINS (13)
+----------------------------------------
+  [IN] admin.m.testexample.com
+  [IN] api.m.testexample.com
+  [IN] app.m.testexample.com
+  [IN] dev.m.testexample.com
+  [IN] example.com
+  [IN] m.m.testexample.com
+  [IN] m.testexample.com
+  [IN] mail.m.testexample.com
+  [IN] staging.m.testexample.com
+  [IN] subjectname@example.com
+  [IN] user@example.com
+  [IN] www.example.com
+  [IN] www.m.testexample.com
+
+----------------------------------------
+ERRORS
+----------------------------------------
+  - Fuzzing error on https://user@example.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://staging.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://subjectname@example.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://mail.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://dev.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://www.example.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://m.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://admin.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://www.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://example.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://api.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'
+  - Fuzzing error on https://app.m.testexample.com: 'ParamFuzzer' object has no attribute 'fuzz_url'

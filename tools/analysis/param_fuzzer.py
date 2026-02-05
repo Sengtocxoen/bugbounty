@@ -947,3 +947,32 @@ class ParamFuzzer:
                         self.stats['false_positives_filtered'] += 1
 
         return results
+
+    def fuzz_url(self, url: str, discover_params: bool = True) -> FuzzSummary:
+        """
+        Fuzz all parameters in a URL
+        
+        Args:
+            url: URL to fuzz
+            discover_params: Try to discover hidden parameters (not yet implemented)
+            
+        Returns:
+            FuzzSummary with all findings
+        """
+        summary = FuzzSummary(target=url)
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        
+        # Fuzz existing parameters
+        for param, values in params.items():
+            original_value = values[0] if values else ""
+            findings = self.fuzz_parameter(url, param, original_value)
+            summary.findings.extend(findings)
+            summary.parameters_tested += 1
+        
+        # TODO: Parameter discovery could be added here if discover_params is True
+        # For now, just fuzz existing parameters
+        
+        summary.total_requests = self.request_count
+        return summary
+
