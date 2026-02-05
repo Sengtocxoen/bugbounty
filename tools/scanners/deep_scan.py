@@ -274,7 +274,7 @@ class DeepScanner:
             self.endpoint_discovery = AmazonEndpointDiscovery(config.username)
             self.tech_detector = AmazonTechDetector(config.username)
             self.js_analyzer = AmazonJSAnalyzer(config.username)
-            self.param_fuzzer = AmazonParamFuzzer(config.username)
+            self.param_fuzzer = ParamFuzzer()  # Generic fuzzer - program-specific doesn't exist
             self.cloud_enumerator = CloudEnumerator()
             self.waf_evader = WAFEvader()
             self.scope_validator = AmazonScopeValidator(self.program_config)
@@ -284,7 +284,7 @@ class DeepScanner:
             self.endpoint_discovery = ShopifyEndpointDiscovery(config.username)
             self.tech_detector = ShopifyTechDetector(config.username)
             self.js_analyzer = ShopifyJSAnalyzer(config.username)
-            self.param_fuzzer = ShopifyParamFuzzer(config.username)
+            self.param_fuzzer = ParamFuzzer()  # Generic fuzzer - program-specific doesn't exist
             self.cloud_enumerator = CloudEnumerator()
             self.waf_evader = WAFEvader()
             self.scope_validator = ShopifyScopeValidator(self.program_config)
