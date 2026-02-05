@@ -357,7 +357,14 @@ class DeepScanner:
 ║  Press Ctrl+C to gracefully stop scanning (current phase will complete)      ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
         """
-        print(banner)
+        try:
+            print(banner)
+        except UnicodeEncodeError:
+            # Fallback for Windows console
+            print("=" * 80)
+            print("DEEP BUG BOUNTY SCANNER v2.0")
+            print("All-in-One Comprehensive Scanning Tool")
+            print("=" * 80)
 
     def check_shutdown(self) -> bool:
         """Check if shutdown was requested"""
@@ -952,7 +959,7 @@ class DeepScanner:
         print(f"  Skip phases: {', '.join(skip_phases) or 'None'}")
         print(f"{'='*80}\n")
 
-        if self.config.program:
+        if self.config.program and self.program_config:
             print(f"[*] Rate limit: {self.program_config.rate_limit} req/sec")
             print(f"[*] User-Agent: {self.program_config.user_agent}")
 
