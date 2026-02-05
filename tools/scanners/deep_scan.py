@@ -65,7 +65,7 @@ from discovery.endpoint_discovery import (
 )
 from analysis.tech_detection import TechDetector, AmazonTechDetector, ShopifyTechDetector
 from analysis.js_analyzer import JSAnalyzer, AmazonJSAnalyzer, ShopifyJSAnalyzer
-from analysis.param_fuzzer import ParamFuzzer, AmazonParamFuzzer, ShopifyParamFuzzer, FUZZ_PAYLOADS
+from analysis.param_fuzzer import ParamFuzzer, FUZZ_PAYLOADS
 from discovery.cloud_enum import CloudEnumerator, CloudEnumResult
 from techniques.waf_evasion import WAFEvader, WAFInfo
 

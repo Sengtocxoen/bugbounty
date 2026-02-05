@@ -20,26 +20,6 @@ def safe_print(text):
         ascii_text = text.encode('ascii', 'ignore').decode('ascii')
         print(ascii_text)
 
-def print_banner():
-    """Print tool banner"""
-    banner = """
-    ╔══════════════════════════════════════════════════════════╗
-    ║         Bug Bounty Automation Suite v2.0                 ║
-    ║     Intelligent · Continuous · Comprehensive             ║
-    ╚══════════════════════════════════════════════════════════╝
-    """
-    try:
-        print(banner)
-    except UnicodeEncodeError:
-        # Fallback for Windows console without UTF-8 support
-        ascii_banner = """
-    ===============================================================
-    |         Bug Bounty Automation Suite v2.0                  |
-    |     Intelligent - Continuous - Comprehensive              |
-    ===============================================================
-        """
-        print(ascii_banner)
-
 
 def create_parser():
     """Create argument parser with subcommands"""
@@ -294,9 +274,6 @@ def main():
     """Main entry point"""
     parser = create_parser()
     args = parser.parse_args()
-    
-    # Print banner
-    print_banner()
     
     # Check mode
     if not args.mode:

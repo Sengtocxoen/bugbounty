@@ -35,9 +35,7 @@ from analysis.tech_detection import (
 from analysis.js_analyzer import (
     JSAnalyzer, AmazonJSAnalyzer, ShopifyJSAnalyzer
 )
-from analysis.param_fuzzer import (
-    ParamFuzzer, AmazonParamFuzzer, ShopifyParamFuzzer
-)
+from analysis.param_fuzzer import ParamFuzzer
 
 
 def print_banner():
@@ -176,13 +174,9 @@ def run_param_fuzzing(urls: List[str], program: str, username: str) -> Dict:
     print("=" * 60)
 
     fuzz_results = {}
-
-    if program == "amazon":
-        fuzzer = AmazonParamFuzzer(username)
-    elif program == "shopify":
-        fuzzer = ShopifyParamFuzzer(username)
-    else:
-        fuzzer = ParamFuzzer()
+    
+    # Use ParamFuzzer for all programs (program-specific fuzzers don't exist)
+    fuzzer = ParamFuzzer()
 
     for url in urls[:10]:  # Limit to first 10 URLs
         if not url.startswith('http'):
