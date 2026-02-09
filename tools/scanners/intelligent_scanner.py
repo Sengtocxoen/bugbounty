@@ -48,7 +48,7 @@ class IntelligentScanner:
         
         # Scanning settings
         self.max_workers = max_workers
-        self.timeout = 10
+        self.timeout = None  # No timeout - run until complete
         self.user_agent = 'Mozilla/5.0 (compatible; SecurityResearch/1.0)'
         
         # Setup logging
@@ -289,7 +289,7 @@ class IntelligentScanner:
                 '-silent'
             ]
             
-            subprocess.run(cmd, timeout=300, check=False, capture_output=True)
+            subprocess.run(cmd, check=False, capture_output=True)
             
             # Parse results
             if Path(output_file).exists():

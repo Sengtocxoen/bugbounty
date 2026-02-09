@@ -105,11 +105,11 @@ def _tool_available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def _run_cmd(cmd: List[str], timeout: int = 300) -> Optional[str]:
-    """Run a command and return stdout, or None on failure."""
+def _run_cmd(cmd: List[str], timeout: int = None) -> Optional[str]:
+    """Run a command and return stdout, or None on failure. No timeout - runs until complete."""
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
+            cmd, capture_output=True, text=True
         )
         return result.stdout.strip() if result.returncode == 0 else None
     except (subprocess.TimeoutExpired, FileNotFoundError, Exception):

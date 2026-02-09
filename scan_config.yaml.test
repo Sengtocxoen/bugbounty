@@ -1,117 +1,391 @@
-# Bug Bounty Scanner - Configuration Template
-# 
-# INSTRUCTIONS:
-# 1. Copy this file: copy scan_config.yaml.test scan_config.yaml
-# 2. Edit scan_config.yaml with your program-specific settings
-# 3. Run: python scanner.py deep -t target.com --program yourprogram -c scan_config.yaml
+# =============================================================================
+# BUG BOUNTY SCANNER - UNIFIED CONFIGURATION
+# =============================================================================
 #
+# This is the SINGLE source of truth for all scanning operations.
+# Every tool, phase, target, and behavior is controlled from this file.
+#
+# INSTRUCTIONS:
+#   1. Copy:  cp scan_config.yaml.test scan_config.yaml
+#   2. Edit:  Fill in your targets, API keys, and preferences
+#   3. Run:   python scanner.py
+#            (or: python scanner.py -c /path/to/scan_config.yaml)
+#
+# No CLI arguments needed - everything is in this file.
+# =============================================================================
 
 # =============================================================================
-# PROGRAM & USER INFO
+# SCAN MODE
 # =============================================================================
+# Choose ONE scanning mode. Each mode runs a different pipeline:
+#
+#   deep        - Comprehensive single-target deep scan (all phases, maximum depth)
+#   fullrecon   - Full reNgine + reconftw 8-phase recon pipeline
+#   intelligent - Smart two-phase scan (quick fingerprint -> deep unique only)
+#   continuous  - 24/7 monitoring loop with change detection & alerts
+#   recon       - Wiz 5-phase reconnaissance methodology
+#   discover    - Fast subdomain/asset discovery only (no vuln scanning)
+#   parallel    - Streaming discovery + concurrent vulnerability scanning
 
-program: null
+scan_mode: "deep"
 
-# Your HackerOne username (required for some programs)
-h1_username: "your_h1_username"
+# =============================================================================
+# PROGRAM & IDENTITY
+# =============================================================================
+program:
+  # Bug bounty program name: "amazon", "shopify", "anduril", or null for generic
+  name: null
+
+  # Your HackerOne username (used for User-Agent and program-specific headers)
+  h1_username: "your_h1_username"
+
+  # Custom HTTP headers sent with every request
+  custom_headers: {}
+    # X-HackerOne-Research: "your_username"
+    # X-Bug-Bounty: "researcher"
+    # Authorization: "Bearer your_token"
 
 # =============================================================================
 # TARGETS
 # =============================================================================
-
-# List your target domains here
 targets:
-  - "example.com"
-  # - "app.example.com"
-  # - "api.example.com"
+  # List of target domains to scan
+  domains:
+    - "example.com"
+    # - "app.example.com"
+    # - "api.example.com"
+
+  # OR load targets from a file (one domain per line)
+  targets_file: null
+  # targets_file: "targets.txt"
+
+  # Pre-discovered subdomains file (skips subdomain discovery)
+  subdomains_file: null
+  # subdomains_file: "subdomains.txt"
 
 # =============================================================================
-# CUSTOM HEADERS
+# SCOPE CONTROL
 # =============================================================================
+scope:
+  # Wildcard patterns for in-scope targets
+  in_scope_patterns: []
+    # - "*.example.com"
+    # - "*.api.example.com"
 
-# Add any required HTTP headers
-custom_headers: {}
+  # Patterns to EXCLUDE from scanning
+  out_of_scope_patterns: []
+    # - "*.dev"
+    # - "staging.*"
+    # - "test.*"
+
+  # Load scope from files
+  in_scope_file: null        # Path to in-scope domains file
+  out_of_scope_file: null    # Path to out-of-scope domains file
+
+  # Recursive subdomain discovery (discover sub-subdomains)
+  recursive: true
+
+  # Filter wildcard DNS entries
+  filter_wildcards: true
 
 # =============================================================================
-# RATE LIMITING
+# NETWORK & RATE LIMITING
 # =============================================================================
+network:
+  # Requests per second (respect program rate limits!)
+  # Amazon VRP = 5, Shopify = 10, generic = 20
+  rate_limit: 10
 
-rate_limit: 5           # Requests per second
-request_delay: 0.2      # Delay between requests (seconds)
-request_timeout: 30     # Request timeout (seconds)
+  # Extra delay between requests in seconds (0 = use rate_limit only)
+  request_delay: 0
+
+  # Max retries for failed requests
+  max_retries: 3
+
+  # Proxy settings (e.g., Burp Suite: "http://127.0.0.1:8080")
+  proxy: null
+
+  # Rotating proxy list for evasion
+  proxy_list: []
+    # - "http://proxy1:8080"
+    # - "socks5://proxy2:1080"
+
+  # Custom User-Agent (overrides program default)
+  user_agent: null
+  # user_agent: "Mozilla/5.0 (compatible; BugBountyScanner/2.0)"
+
+  # Adaptive rate limiting - auto-slow on 429/503 responses
+  adaptive_rate_limit: true
+  backoff_multiplier: 2.0
 
 # =============================================================================
-# SCAN PHASES
+# WORKERS & PARALLELISM
 # =============================================================================
+workers:
+  # Max parallel workers for scanning phases
+  max_workers: 10
 
+  # Threads for subdomain discovery tools
+  discovery_threads: 50
+
+  # Parallel vulnerability scan workers
+  scan_workers: 5
+
+  # Per-tool thread counts (for tools that support threading)
+  tool_threads:
+    subfinder: 100
+    puredns: 100
+    httpx: 50
+    nuclei: 150
+    ffuf: 40
+    katana: 20
+    naabu: 50
+    dalfox: 30
+    sqlmap: 5
+    arjun: 20
+    feroxbuster: 30
+    gospider: 20
+    gau: 10
+    amass: 30
+
+# =============================================================================
+# SCAN PHASES (enable/disable each phase)
+# =============================================================================
 phases:
-  subdomain_discovery: true    # Find subdomains
-  port_scanning: true          # Scan ports
-  endpoint_discovery: true     # Find endpoints
-  tech_detection: true         # Detect technologies
-  js_analysis: true            # Analyze JavaScript
-  param_fuzzing: true          # Test for vulnerabilities
-  verification: true           # Verify findings
+
+  # --- RECONNAISSANCE ---
+
+  subdomain_discovery:
+    enabled: true
+    # Use extended wordlist for DNS bruteforce
+    use_extended_wordlist: true
+    # Custom wordlist file path (overrides built-in)
+    custom_wordlist: null
+    # Passive sources to use
+    sources:
+      subfinder: true
+      amass: true
+      assetfinder: true
+      crtsh: true
+      hackertarget: true
+      alienvault: true
+      urlscan: true
+      rapiddns: true
+      certspotter: true
+      threatcrowd: true
+      bufferover: true
+
+  dns_enumeration:
+    enabled: true
+    # Active DNS bruteforcing
+    bruteforce: true
+    # DNS permutation (alterx-style)
+    permutations: true
+    # Thoroughness: "quick", "medium", "thorough"
+    thoroughness: "thorough"
+
+  osint:
+    enabled: true
+    whois: true
+    email_harvesting: true
+    google_dorking: true
+    metadata_extraction: true
+    social_media: false
+    root_domain_discovery: true
+
+  # --- HOST ANALYSIS ---
+
+  port_scanning:
+    enabled: true
+    # Scan all common ports (22+ ports)
+    full_scan: true
+    # Extra ports to scan
+    custom_ports: []
+    # Service version detection (slower but more info)
+    service_detection: true
+
+  waf_detection:
+    enabled: true
+
+  cloud_enumeration:
+    enabled: true
+    # Cloud providers to enumerate
+    providers:
+      aws_s3: true
+      azure_blob: true
+      gcp_storage: true
+    # Test bucket permissions
+    test_permissions: true
+
+  # --- WEB ANALYSIS ---
+
+  endpoint_discovery:
+    enabled: true
+    # Brute-force common paths
+    bruteforce_paths: true
+    # Parse robots.txt and sitemap.xml
+    parse_robots: true
+    parse_sitemap: true
+    # HTML link extraction
+    extract_links: true
+
+  tech_detection:
+    enabled: true
+    # Deep scan mode (more fingerprints, slower)
+    deep_scan: true
+
+  js_analysis:
+    enabled: true
+    # Recursive JS analysis (follow imports)
+    recursive: true
+    # Max recursion depth
+    max_depth: 2
+    # Extract secrets from JS
+    extract_secrets: true
+    # Find DOM XSS sinks
+    find_dom_sinks: true
+
+  # --- VULNERABILITY SCANNING ---
+
+  param_fuzzing:
+    enabled: true
+    # Auto-discover parameters before fuzzing
+    discover_params: true
+    # Vulnerability types to test
+    test_xss: true
+    test_sqli: true
+    test_ssrf: true
+    test_lfi: true
+    test_rce: true
+    test_ssti: true
+    test_open_redirect: true
+    test_xxe: true
+    test_crlf: true
+
+  vulnerability_scanning:
+    enabled: true
+
+    # Nuclei template scanning
+    nuclei:
+      enabled: true
+      severity:
+        - critical
+        - high
+        - medium
+      # Specific template tags (empty = all)
+      tags: []
+      # Specific template IDs (empty = all)
+      templates: []
+      # Exclude specific tags
+      exclude_tags: []
+      # Update templates before scanning
+      auto_update: true
+
+    # Individual vulnerability scanners
+    xss_scanning: true
+    sqli_scanning: true
+    cors_scanning: true
+    ssrf_scanning: true
+    crlf_scanning: true
+    open_redirect_scanning: true
+    header_injection: true
+
+  # --- VERIFICATION & CHAINING ---
+
+  verification:
+    enabled: true
+    # Concurrent verification threads
+    threads: 10
+    # Only verify critical/high severity findings
+    verify_only_high_priority: false
+    # Test default credentials on admin panels (USE WITH CAUTION)
+    test_default_credentials: false
+
+  vuln_chaining:
+    enabled: true
+    # Auto-escalate severity based on chaining
+    auto_escalate: true
+    # Chain types to detect
+    chains:
+      ssrf_plus_cloud_metadata: true
+      xss_plus_csrf: true
+      sqli_plus_auth_bypass: true
+      ssti_plus_rce: true
+      open_redirect_plus_oauth: true
+      xxe_plus_ssrf: true
+      lfi_plus_rce: true
+
+  # --- REPORTING ---
+
+  reporting:
+    enabled: true
 
 # =============================================================================
-# ADVANCED FEATURES (NEW!)
+# ADVANCED FEATURES
 # =============================================================================
+advanced:
 
-advanced_features:
   # Response Deduplication - Skip similar pages (60% faster scans)
   response_dedup:
     enabled: true
-    similarity_threshold: 0.85   # 85% similarity = duplicate (0.0-1.0)
-  
-  # Secret Validation - Verify credentials are active (90% less false positives)  
+    # Similarity threshold (0.0 - 1.0, higher = more strict)
+    similarity_threshold: 0.85
+
+  # Secret Validation - Verify discovered credentials are active
   secret_validation:
     enabled: true
-    validate_aws: true           # Test AWS keys via STS
-    validate_firebase: true      # Test Firebase URLs
-    validate_github: true        # Test GitHub tokens
-    validate_google: true        # Test Google API keys
-    validate_slack: true         # Test Slack tokens
-  
+    validate_aws: true       # Test AWS keys via STS
+    validate_firebase: true  # Test Firebase URLs
+    validate_github: true    # Test GitHub tokens
+    validate_google: true    # Test Google API keys
+    validate_slack: true     # Test Slack tokens
+
   # GitHub/GitLab Dorking - Search repos for leaks
   github_dorking:
-    enabled: false               # Enable to search public repos
-    github_token: null           # Optional: GitHub PAT for higher rate limits
-    gitlab_token: null           # Optional: GitLab token
+    enabled: false
     max_results: 50
-  
-  # GraphQL Introspection - Map GraphQL schemas
+
+  # GraphQL Introspection
   graphql:
     enabled: true
-    auto_detect: true            # Auto-detect GraphQL endpoints
-    introspect_authenticated: false  # Try introspection with auth headers
-  
-  # Advanced Fuzzing - Recursive directory discovery
+    auto_detect: true
+    introspect_authenticated: false
+
+  # Advanced Fuzzing
   fuzzing:
-    recursive: true              # Recurse into found directories
-    max_depth: 3                 # Max recursion depth
-    header_fuzz: true            # Try header injection bypasses
-    soft_404_detection: true     # Smart soft-404 filtering
-    wordlist: "wordlists/common.txt"
-  
-  # Vulnerability Chaining - Auto-escalate severity
-  vuln_chaining:
-    enabled: true
-    auto_escalate: true          # Auto-trigger deep scans on findings
-    chain_ssrf_idor: true        # Chain SSRF + IDOR
-    chain_xss_csrf: true         # Chain XSS + CSRF
-    chain_lfi_rce: true          # Chain LFI + RCE
-  
-  # Enhanced WAF Evasion
+    recursive: true
+    max_depth: 3
+    header_fuzz: true
+    soft_404_detection: true
+    custom_wordlist: null
+    # Wordlist: "wordlists/common.txt"
+
+  # WAF Evasion Techniques
   waf_evasion:
-    proxy_rotation: false        # Enable proxy rotation
-    proxy_list: []               # List of proxy URLs
-    tamper_payloads: true        # SQLMap-style tampering
-    adaptive_delay: true         # Auto-adjust on rate limits
+    enabled: true
+    tamper_payloads: true
+    adaptive_delay: true
+    encoding_bypass: true
+
+  # Web Hacking 2025 Techniques
+  web_hacking_2025:
+    enabled: true
+    techniques:
+      auth_bypass: true
+      ssrf: true
+      xss_csrf: true
+      ssti: true
+      xxe: true
+      deserialization: true
+      cache_poisoning: true
+      xs_leaks: true
+      request_smuggling: true
+      protocol_attacks: true
+      framework_vulns: true
 
 # =============================================================================
 # LIMITS (0 = unlimited)
 # =============================================================================
-
 limits:
   max_subdomains: 0
   max_endpoints: 0
@@ -119,52 +393,139 @@ limits:
   max_fuzz_urls: 0
 
 # =============================================================================
-# PORT SCANNING
-# =============================================================================
-
-port_scan:
-  full_scan: true              # Scan all common ports
-  custom_ports: []             # Add specific ports: [8080, 8443]
-
-# =============================================================================
-# VERIFICATION
-# =============================================================================
-
-verification:
-  threads: 10                  # Concurrent verification threads
-  verify_only_high_priority: false
-  test_default_credentials: false  # DO NOT enable unless authorized
-
-# =============================================================================
 # OUTPUT
 # =============================================================================
-
 output:
-  directory: "results"         # Output directory
+  # Base directory for all scan results
+  directory: "results"
+
+  # Output formats
   save_json: true
   save_txt: true
   save_html: false
+  save_csv: false
+
+  # Verbose console output
   verbose: true
+
+# =============================================================================
+# NOTIFICATIONS
+# =============================================================================
+notifications:
+  enabled: false
+
+  # Slack webhook URL
+  slack_webhook: null
+
+  # Discord webhook URL
+  discord_webhook: null
+
+  # Telegram bot
+  telegram_bot_token: null
+  telegram_chat_id: null
+
+# =============================================================================
+# API KEYS (for tools that need them)
+# =============================================================================
+api_keys:
+  shodan: null
+  censys_id: null
+  censys_secret: null
+  virustotal: null
+  securitytrails: null
+  binaryedge: null
+  github_token: null
+  gitlab_token: null
+  hunter_io: null
+  intelx: null
+  whoisxml: null
+  chaos: null           # ProjectDiscovery Chaos
+  fullhunt: null
+  netlas: null
+  zoomeye: null
+  fofa: null
+
+# =============================================================================
+# WORDLISTS
+# =============================================================================
+wordlists:
+  # Subdomain bruteforce wordlist
+  subdomains: null       # Uses built-in if null
+  # Directory/path bruteforce wordlist
+  directories: null      # Uses built-in if null
+  # Parameter discovery wordlist
+  parameters: null       # Uses built-in if null
+  # Custom fuzzing payloads
+  payloads: null         # Uses built-in if null
+
+# =============================================================================
+# TOOL PATHS (override if tools aren't in PATH)
+# =============================================================================
+tool_paths:
+  subfinder: "subfinder"
+  amass: "amass"
+  assetfinder: "assetfinder"
+  puredns: "puredns"
+  massdns: "massdns"
+  alterx: "alterx"
+  httpx: "httpx"
+  naabu: "naabu"
+  nuclei: "nuclei"
+  ffuf: "ffuf"
+  feroxbuster: "feroxbuster"
+  katana: "katana"
+  gospider: "gospider"
+  gau: "gau"
+  waybackurls: "waybackurls"
+  dalfox: "dalfox"
+  sqlmap: "sqlmap"
+  ghauri: "ghauri"
+  arjun: "arjun"
+  paramspider: "paramspider"
+  nmap: "nmap"
+  wafw00f: "wafw00f"
+  trufflehog: "trufflehog"
+  gitleaks: "gitleaks"
+  corsy: "corsy"
+  crlfuzz: "crlfuzz"
+
+# =============================================================================
+# CONTINUOUS MODE SETTINGS
+# =============================================================================
+continuous:
+  # Seconds between scan iterations
+  scan_interval: 3600    # 1 hour
+
+  # Resource limits
+  max_cpu: 80            # Throttle if CPU exceeds this %
+  max_memory: 80         # Throttle if memory exceeds this %
+
+  # Database for tracking findings between scans
+  database: "findings.db"
 
 # =============================================================================
 # SAFETY
 # =============================================================================
-
 safety:
-  confirm_before_run: true     # Ask for confirmation
-  show_review: true            # Show full review before running
-  max_threads: 10
+  # Ask for confirmation before starting scan
+  confirm_before_run: false
+
+  # Show scan config review before running
+  show_review: true
+
+  # Max global threads (safety cap)
+  max_threads: 50
 
 # =============================================================================
 # NOTES
 # =============================================================================
-
 notes: |
-  Bug bounty scan configuration - Maximum Capabilities Edition
-  - Edit targets, headers, and phases as needed
-  - Enable advanced_features for maximum bug discovery
-  - Secret validation reduces false positives by 90%
-  - Response dedup speeds up scans by 60%
-  - Vulnerability chaining auto-escalates severity
-  - Review configuration before running
-  - Follow program rules and scope
+  Bug Bounty Scanner - Unified Configuration
+  -------------------------------------------
+  - Edit this file to control ALL scanning behavior
+  - Set scan_mode to choose your scanning pipeline
+  - Enable/disable individual phases as needed
+  - Set rate_limit to respect program rules
+  - Add API keys for maximum coverage
+  - No timeouts: scans run until completion or Ctrl+C
+  - Results saved to output.directory

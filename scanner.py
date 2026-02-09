@@ -1,376 +1,526 @@
 #!/usr/bin/env python3
 """
-Bug Bounty Scanner - Unified CLI
-Main entry point for all scanning modes
+Bug Bounty Scanner - Unified Config-Driven CLI
+================================================
+
+Single entry point for all scanning modes.
+Everything is controlled via scan_config.yaml - no complex CLI args needed.
+
+Usage:
+    python scanner.py                          # Uses ./scan_config.yaml
+    python scanner.py -c /path/to/config.yaml  # Custom config path
 """
 
 import sys
+import signal
 import argparse
 from pathlib import Path
 
+import yaml
+
 # Add tools to path
 sys.path.insert(0, str(Path(__file__).parent / 'tools'))
+
+
+# Graceful shutdown
+SHUTDOWN = False
+
+
+def _signal_handler(signum, frame):
+    global SHUTDOWN
+    if SHUTDOWN:
+        print("\n[!] Force exit...")
+        sys.exit(1)
+    print("\n\n[!] Shutdown requested. Finishing current task...")
+    print("[!] Press Ctrl+C again to force exit")
+    SHUTDOWN = True
+
+
+signal.signal(signal.SIGINT, _signal_handler)
+
 
 def safe_print(text):
     """Print text, falling back to ASCII if Unicode fails"""
     try:
         print(text)
     except UnicodeEncodeError:
-        # Remove emoji and special chars for Windows console
         ascii_text = text.encode('ascii', 'ignore').decode('ascii')
         print(ascii_text)
 
 
-def create_parser():
-    """Create argument parser with subcommands"""
-    parser = argparse.ArgumentParser(
-        description='Bug Bounty Scanner - Unified CLI for all scanning modes',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
-Examples:
-  # Full recon (reNgine + reconftw pipeline - MAXIMUM depth)
-  python scanner.py fullrecon -t example.com -c configs/full_recon.yaml
-
-  # Intelligent scanning (recommended for large subdomain lists)
-  python scanner.py intelligent example.com -s subdomains.txt
-
-  # Continuous 24/7 scanning
-  python scanner.py continuous -c continuous_config.yaml
-
-  # Deep comprehensive scan
-  python scanner.py deep example.com -p amazon
-
-  # Wiz reconnaissance methodology
-  python scanner.py recon example.com --thorough
-
-  # Quick subdomain discovery only
-  python scanner.py discover example.com
-
-For more help: python scanner.py <mode> --help
-        '''
-    )
-    
-    subparsers = parser.add_subparsers(dest='mode', help='Scanning mode')
-
-    # === FULL RECON MODE (reNgine + reconftw) ===
-    fullrecon_parser = subparsers.add_parser(
-        'fullrecon',
-        help='Full recon pipeline (reNgine + reconftw) - MAXIMUM depth scanning',
-        description='''Full Reconnaissance Scanner: OSINT -> DNS Enum -> Host Analysis ->
-Web Analysis -> Vuln Scanning -> Verification -> Chaining -> Reporting.
-Combines all capabilities from reNgine and reconftw into one pipeline.'''
-    )
-    fullrecon_parser.add_argument('-t', '--target', action='append', dest='targets',
-                                 help='Target domain (can specify multiple with -t d1 -t d2)')
-    fullrecon_parser.add_argument('-c', '--config', default='configs/full_recon.yaml',
-                                 help='Config file (default: configs/full_recon.yaml)')
-    fullrecon_parser.add_argument('-o', '--output', default=None,
-                                 help='Output directory (overrides config)')
-    fullrecon_parser.add_argument('--skip-osint', action='store_true',
-                                 help='Skip OSINT phase')
-    fullrecon_parser.add_argument('--skip-dns', action='store_true',
-                                 help='Skip DNS enumeration phase')
-    fullrecon_parser.add_argument('--skip-web', action='store_true',
-                                 help='Skip web analysis phase')
-    fullrecon_parser.add_argument('--skip-vulns', action='store_true',
-                                 help='Skip vulnerability scanning phase')
-    fullrecon_parser.add_argument('--resume', action='store_true',
-                                 help='Resume from previous scan progress')
-    fullrecon_parser.add_argument('--no-confirm', action='store_true',
-                                 help='Skip confirmation prompt')
-
-    # === INTELLIGENT MODE ===
-    intelligent_parser = subparsers.add_parser(
-        'intelligent',
-        help='Smart two-phase scanning with duplicate detection (80-85% faster)',
-        description='Intelligent scanner: Quick scan all → Detect duplicates → Deep scan only unique targets'
-    )
-    intelligent_parser.add_argument('target', help='Target domain (e.g., example.com)')
-    intelligent_parser.add_argument('-s', '--subdomains', required=True,
-                                   help='File with subdomains (one per line)')
-    intelligent_parser.add_argument('-o', '--output', default='./results/intelligent',
-                                   help='Output directory (default: ./results/intelligent)')
-    intelligent_parser.add_argument('-w', '--workers', type=int, default=5,
-                                   help='Number of parallel workers for deep scan (default: 5)')
-    intelligent_parser.add_argument('-u', '--username', required=False,
-                                   help='HackerOne username (for program-specific User-Agent)')
-    intelligent_parser.add_argument('--skip-deep', action='store_true',
-                                   help='Skip deep scanning (quick scan only)')
-    
-    # === CONTINUOUS MODE ===
-    continuous_parser = subparsers.add_parser(
-        'continuous',
-        help='24/7 automated scanning with database tracking',
-        description='Continuous scanner: Runs forever, tracks changes, sends alerts for new findings'
-    )
-    continuous_parser.add_argument('-c', '--config', default='continuous_config.yaml',
-                                  help='Configuration file (default: continuous_config.yaml)')
-    continuous_parser.add_argument('--once', action='store_true',
-                                  help='Run once and exit (don\'t loop)')
-    
-    # === DEEP MODE ===
-    deep_parser = subparsers.add_parser(
-        'deep',
-        help='Comprehensive single-target scan with all tools',
-        description='Deep scanner: Full vulnerability scanning, thorough but slower'
-    )
-    deep_parser.add_argument('-t', '--target', action='append', dest='targets',
-                            help='Target domain (can specify multiple with -t domain1 -t domain2)')
-    deep_parser.add_argument('-p', '--program', default='generic',
-                            help='Bug bounty program name (loads from config file or uses generic)')
-    deep_parser.add_argument('-u', '--username', required=False,
-                            help='HackerOne username (e.g., for Amazon: amazonvrpresearcher_yourh1username)')
-    deep_parser.add_argument('--parallel', action='store_true',
-                            help='Enable parallel scanning (faster)')
-    deep_parser.add_argument('--workers', type=int, default=5,
-                            help='Number of parallel workers (default: 5)')
-    deep_parser.add_argument('--skip-web', action='store_true',
-                            help='Skip web vulnerability scanning')
-    deep_parser.add_argument('--skip-ports', action='store_true',
-                            help='Skip port scanning')
-    deep_parser.add_argument('--verbose', action='store_true',
-                            help='Verbose output')
-    deep_parser.add_argument('--skip-cloud', action='store_true',
-                            help='Skip cloud bucket enumeration')
-    deep_parser.add_argument('--skip-waf', action='store_true',
-                            help='Skip WAF detection')
-    deep_parser.add_argument('-c', '--config', help='Path to configuration file (e.g., scan_config.yaml)')
-    
-    # === RECON MODE ===
-    recon_parser = subparsers.add_parser(
-        'recon',
-        help='Wiz 5-phase reconnaissance methodology',
-        description='Reconnaissance: Subdomain discovery, port scanning, tech detection, endpoint discovery'
-    )
-    recon_parser.add_argument('target', help='Target domain')
-    recon_parser.add_argument('--quick', action='store_true',
-                             help='Quick mode (faster, less thorough)')
-    recon_parser.add_argument('--thorough', action='store_true',
-                             help='Thorough mode (slower, more comprehensive)')
-    recon_parser.add_argument('-o', '--output', default='./results/recon',
-                             help='Output directory (default: ./results/recon)')
-    
-    # === DISCOVER MODE ===
-    discover_parser = subparsers.add_parser(
-        'discover',
-        help='Fast subdomain and asset discovery only',
-        description='Discovery: Quick subdomain enumeration and live host detection (no vulnerability scanning)'
-    )
-    discover_parser.add_argument('target', help='Target domain')
-    discover_parser.add_argument('-o', '--output', default='./results/discovery',
-                                help='Output directory (default: ./results/discovery)')
-    discover_parser.add_argument('--tools', nargs='+',
-                                choices=['subfinder', 'amass', 'assetfinder', 'all'],
-                                default=['all'],
-                                help='Tools to use (default: all)')
-    
-    return parser
-
-
-def run_fullrecon_mode(args):
-    """Run full reconnaissance pipeline (reNgine + reconftw)"""
-    safe_print("\n[*] Starting Full Reconnaissance Scanner...")
-    safe_print("    reNgine + reconftw combined pipeline\n")
-
-    import yaml
-    from scanners.full_recon import FullReconScanner, FullReconConfig
-
-    config = FullReconConfig(
-        targets=args.targets or [],
-        config_file=Path(args.config) if args.config else None,
-    )
-    config.load()
-
-    # CLI overrides
-    if args.output:
-        config.output_dir = Path(args.output)
-    if args.targets:
-        config.targets = args.targets
-
-    # Phase skip flags
-    if args.skip_osint:
-        config.config.setdefault("osint", {})["enabled"] = False
-    if args.skip_dns:
-        config.config.setdefault("subdomains", {})["enabled"] = False
-    if args.skip_web:
-        config.config.setdefault("web_analysis", {})["enabled"] = False
-    if args.skip_vulns:
-        config.config.setdefault("vulnerability_scan", {})["enabled"] = False
-    if args.no_confirm:
-        config.config.setdefault("safety", {})["confirm_before_run"] = False
-
-    if not config.targets:
-        safe_print("[!] No targets specified.")
-        safe_print("    Use -t domain1 -t domain2 OR define targets in config file")
+def load_config(config_path: Path) -> dict:
+    """Load and validate the unified scan configuration."""
+    if not config_path.exists():
+        safe_print(f"[!] Config file not found: {config_path}")
+        safe_print(f"    Create one from template:  cp scan_config.yaml.test scan_config.yaml")
         sys.exit(1)
 
-    scanner = FullReconScanner(config)
+    with open(config_path) as f:
+        config = yaml.safe_load(f) or {}
+
+    return config
+
+
+def resolve_targets(config: dict) -> list:
+    """Resolve target list from config (domains list or targets file)."""
+    targets_cfg = config.get('targets', {})
+    targets = []
+
+    # From domains list
+    domains = targets_cfg.get('domains', [])
+    if domains:
+        targets.extend(domains)
+
+    # From targets file
+    targets_file = targets_cfg.get('targets_file')
+    if targets_file:
+        p = Path(targets_file)
+        if p.exists():
+            with open(p) as f:
+                targets.extend([line.strip() for line in f if line.strip()])
+        else:
+            safe_print(f"[!] Targets file not found: {targets_file}")
+
+    return targets
+
+
+def resolve_subdomains(config: dict) -> list:
+    """Load pre-discovered subdomains if provided."""
+    targets_cfg = config.get('targets', {})
+    subs_file = targets_cfg.get('subdomains_file')
+    if subs_file:
+        p = Path(subs_file)
+        if p.exists():
+            with open(p) as f:
+                return [line.strip() for line in f if line.strip()]
+    return []
+
+
+def print_config_summary(config: dict, targets: list):
+    """Print a summary of the scan configuration."""
+    mode = config.get('scan_mode', 'deep')
+    program = config.get('program', {}).get('name')
+    username = config.get('program', {}).get('h1_username', 'N/A')
+    rate_limit = config.get('network', {}).get('rate_limit', 10)
+    output_dir = config.get('output', {}).get('directory', 'results')
+    workers = config.get('workers', {}).get('max_workers', 10)
+
+    print(f"\n{'='*70}")
+    print(f"  BUG BOUNTY SCANNER")
+    print(f"{'='*70}")
+    print(f"  Mode:        {mode}")
+    print(f"  Targets:     {len(targets)} ({', '.join(targets[:3])}{'...' if len(targets) > 3 else ''})")
+    print(f"  Program:     {program or 'generic'}")
+    print(f"  Username:    {username}")
+    print(f"  Rate Limit:  {rate_limit} req/s")
+    print(f"  Workers:     {workers}")
+    print(f"  Output:      {output_dir}")
+
+    # Show enabled phases
+    phases = config.get('phases', {})
+    enabled = [name for name, cfg in phases.items()
+               if isinstance(cfg, dict) and cfg.get('enabled', True)]
+    disabled = [name for name, cfg in phases.items()
+                if isinstance(cfg, dict) and not cfg.get('enabled', True)]
+
+    if enabled:
+        print(f"  Phases ON:   {', '.join(enabled)}")
+    if disabled:
+        print(f"  Phases OFF:  {', '.join(disabled)}")
+
+    print(f"{'='*70}\n")
+
+
+def confirm_scan(config: dict) -> bool:
+    """Ask for confirmation if safety.confirm_before_run is true."""
+    safety = config.get('safety', {})
+    if safety.get('confirm_before_run', False):
+        try:
+            answer = input("Proceed with scan? [y/N]: ").strip().lower()
+            return answer == 'y'
+        except EOFError:
+            return True
+    return True
+
+
+# =============================================================================
+# SCAN MODE RUNNERS
+# =============================================================================
+
+
+def run_deep_mode(config: dict, targets: list):
+    """Run deep comprehensive scan."""
+    from scanners.deep_scan import DeepScanner, DeepScanConfig
+
+    phases = config.get('phases', {})
+    limits = config.get('limits', {})
+    network = config.get('network', {})
+    program_cfg = config.get('program', {})
+    output_cfg = config.get('output', {})
+    advanced = config.get('advanced', {})
+
+    scan_config = DeepScanConfig(
+        targets=targets,
+        program=program_cfg.get('name'),
+        username=program_cfg.get('h1_username', 'yourh1username'),
+        output_dir=Path(output_cfg.get('directory', 'results')) / 'deep',
+        # Phase control from config
+        skip_subdomains=not phases.get('subdomain_discovery', {}).get('enabled', True),
+        skip_ports=not phases.get('port_scanning', {}).get('enabled', True),
+        skip_endpoints=not phases.get('endpoint_discovery', {}).get('enabled', True),
+        skip_tech=not phases.get('tech_detection', {}).get('enabled', True),
+        skip_js=not phases.get('js_analysis', {}).get('enabled', True),
+        skip_fuzz=not phases.get('param_fuzzing', {}).get('enabled', True),
+        skip_cloud=not phases.get('cloud_enumeration', {}).get('enabled', True),
+        skip_waf=not phases.get('waf_detection', {}).get('enabled', True),
+        skip_recursive=not config.get('scope', {}).get('recursive', True),
+        skip_verification=not phases.get('verification', {}).get('enabled', True),
+        # Verification
+        verification_threads=phases.get('verification', {}).get('threads', 10),
+        verify_only_high_priority=phases.get('verification', {}).get('verify_only_high_priority', False),
+        test_default_credentials=phases.get('verification', {}).get('test_default_credentials', False),
+        # Limits
+        max_subdomains=limits.get('max_subdomains', 0),
+        max_endpoints=limits.get('max_endpoints', 0),
+        max_js_files=limits.get('max_js_files', 0),
+        max_fuzz_urls=limits.get('max_fuzz_urls', 0),
+        # Port scanning
+        full_port_scan=phases.get('port_scanning', {}).get('full_scan', True),
+        # Wordlist
+        extended_wordlist=phases.get('subdomain_discovery', {}).get('use_extended_wordlist', True),
+        custom_wordlist=Path(phases.get('subdomain_discovery', {}).get('custom_wordlist')) if phases.get('subdomain_discovery', {}).get('custom_wordlist') else None,
+        # Output
+        verbose=output_cfg.get('verbose', True),
+        save_json=output_cfg.get('save_json', True),
+        save_txt=output_cfg.get('save_txt', True),
+        # Network overrides
+        custom_headers=program_cfg.get('custom_headers', {}),
+        custom_rate_limit=float(network.get('rate_limit', 0)),
+        custom_request_delay=float(network.get('request_delay', 0)),
+        custom_timeout=0,  # No timeouts
+        # Pass full config for nuclei and advanced features
+        config_file=None,
+    )
+
+    # Store the full config dict on the scan_config so scanners can access it
+    scan_config._full_config = config
+
+    scanner = DeepScanner(scan_config)
+    scanner.run()
+
+    safe_print("\n[+] Deep scan complete!")
+
+
+def run_fullrecon_mode(config: dict, targets: list):
+    """Run full reconnaissance pipeline."""
+    from scanners.full_recon import FullReconScanner, FullReconConfig
+
+    output_dir = Path(config.get('output', {}).get('directory', 'results')) / 'fullrecon'
+
+    # Build the full_recon config dict from our unified config
+    recon_cfg = _build_fullrecon_config(config)
+
+    fr_config = FullReconConfig(
+        targets=targets,
+        config=recon_cfg,
+        output_dir=output_dir,
+    )
+
+    scanner = FullReconScanner(fr_config)
     scanner.run()
 
     safe_print("\n[+] Full reconnaissance complete!")
 
 
-def run_intelligent_mode(args):
-    """Run intelligent scanner"""
-    safe_print("\n[*] Starting Intelligent Scanner...")
-    print(f"Target: {args.target}")
-    print(f"Subdomains file: {args.subdomains}")
-    print(f"Output: {args.output}")
-    print(f"Workers: {args.workers}\n")
-    
+def _build_fullrecon_config(config: dict) -> dict:
+    """Translate unified config into full_recon.py config format."""
+    phases = config.get('phases', {})
+    network = config.get('network', {})
+    program_cfg = config.get('program', {})
+    advanced = config.get('advanced', {})
+
+    return {
+        'general': {
+            'program': program_cfg.get('name'),
+            'h1_username': program_cfg.get('h1_username'),
+            'targets': [],  # Already passed separately
+            'custom_headers': program_cfg.get('custom_headers', {}),
+            'output_dir': str(Path(config.get('output', {}).get('directory', 'results')) / 'fullrecon'),
+            'notifications': config.get('notifications', {}),
+            'diff_mode': False,
+        },
+        'performance': {
+            'rate_limit': network.get('rate_limit', 150),
+            'request_delay': network.get('request_delay', 0),
+            'request_timeout': 0,  # No timeout
+            'max_workers': config.get('workers', {}).get('max_workers', 10),
+            'threads': config.get('workers', {}).get('tool_threads', {}),
+            'adaptive': {
+                'enabled': network.get('adaptive_rate_limit', True),
+                'backoff_on_429': True,
+                'backoff_on_503': True,
+                'max_retries': network.get('max_retries', 3),
+                'backoff_multiplier': network.get('backoff_multiplier', 2.0),
+            },
+        },
+        'osint': {
+            'enabled': phases.get('osint', {}).get('enabled', True),
+            'whois': {'enabled': phases.get('osint', {}).get('whois', True)},
+            'email_harvesting': {'enabled': phases.get('osint', {}).get('email_harvesting', True)},
+            'google_dorking': {'enabled': phases.get('osint', {}).get('google_dorking', True)},
+        },
+        'subdomains': {
+            'enabled': phases.get('subdomain_discovery', {}).get('enabled', True),
+        },
+        'host_analysis': {
+            'enabled': phases.get('port_scanning', {}).get('enabled', True),
+        },
+        'web_analysis': {
+            'enabled': phases.get('endpoint_discovery', {}).get('enabled', True),
+        },
+        'vulnerability_scan': {
+            'enabled': phases.get('vulnerability_scanning', {}).get('enabled', True),
+        },
+        'verification': {
+            'enabled': phases.get('verification', {}).get('enabled', True),
+            'threads': phases.get('verification', {}).get('threads', 10),
+        },
+        'chaining': {
+            'enabled': phases.get('vuln_chaining', {}).get('enabled', True),
+            'chains': phases.get('vuln_chaining', {}).get('chains', {}),
+        },
+        'reporting': {
+            'enabled': phases.get('reporting', {}).get('enabled', True),
+            'formats': {
+                'json': config.get('output', {}).get('save_json', True),
+                'txt': config.get('output', {}).get('save_txt', True),
+                'html': config.get('output', {}).get('save_html', False),
+                'csv': config.get('output', {}).get('save_csv', False),
+            },
+            'scoring': {'hotlist': True},
+        },
+        'safety': config.get('safety', {}),
+    }
+
+
+def run_intelligent_mode(config: dict, targets: list):
+    """Run intelligent two-phase scanner."""
     from scanners.intelligent_scanner import IntelligentScanner
-    
-    # Load subdomains
-    with open(args.subdomains) as f:
-        subdomains = [line.strip() for line in f if line.strip()]
-        
-    print(f"Loaded {len(subdomains)} subdomains\n")
-    
-    # Create scanner
+
+    workers = config.get('workers', {}).get('scan_workers', 5)
+    output_dir = Path(config.get('output', {}).get('directory', 'results')) / 'intelligent'
+
+    # Load subdomains (required for intelligent mode)
+    subdomains = resolve_subdomains(config)
+    if not subdomains:
+        # If no subdomains file, use targets as subdomains
+        subdomains = targets
+        safe_print("[*] No subdomains file provided, using target domains directly")
+
+    target = targets[0] if targets else 'unknown'
+
+    safe_print(f"[*] Loaded {len(subdomains)} subdomains for intelligent scanning")
+
     scanner = IntelligentScanner(
-        output_dir=Path(args.output),
-        max_workers=args.workers
+        output_dir=output_dir,
+        max_workers=workers
     )
-    
-    # Run scan
-    scanner.scan_subdomains(args.target, subdomains)
-    
+
+    scanner.scan_subdomains(target, subdomains)
+
     safe_print("\n[+] Intelligent scan complete!")
-    print(f"Results: {args.output}")
 
 
-def run_continuous_mode(args):
-    """Run continuous scanner"""
-    safe_print("\n[*] Starting Continuous Scanner...")
-    print(f"Config: {args.config}")
-    
+def run_continuous_mode(config: dict, targets: list):
+    """Run continuous 24/7 scanner."""
     from scanners.continuous_scanner import ContinuousScanner
-    
-    scanner = ContinuousScanner(Path(args.config))
-    
-    if args.once:
-        print("Running single iteration...\n")
-        # Run one iteration
-        for target in scanner.targets:
-            scanner.scan_target(target)
-    else:
-        print("Running continuously (Ctrl+C to stop)...\n")
-        scanner.run_forever()
+
+    output_dir = Path(config.get('output', {}).get('directory', 'results')) / 'continuous'
+    continuous_cfg = config.get('continuous', {})
+
+    # Build continuous scanner config
+    cont_config = {
+        'scanning': {
+            'targets': targets,
+            'output_dir': str(output_dir),
+            'scan_interval': continuous_cfg.get('scan_interval', 3600),
+            'max_cpu': continuous_cfg.get('max_cpu', 80),
+            'max_memory': continuous_cfg.get('max_memory', 80),
+        },
+        'phases': {
+            'reconnaissance': config.get('phases', {}).get('subdomain_discovery', {}).get('enabled', True),
+            'vulnerability_scanning': config.get('phases', {}).get('vulnerability_scanning', {}).get('enabled', True),
+        },
+        'tools': {
+            'nuclei': config.get('phases', {}).get('vulnerability_scanning', {}).get('nuclei', {}).get('enabled', True),
+        },
+        'nuclei': {
+            'severity': config.get('phases', {}).get('vulnerability_scanning', {}).get('nuclei', {}).get('severity', ['critical', 'high', 'medium']),
+            'tags': config.get('phases', {}).get('vulnerability_scanning', {}).get('nuclei', {}).get('tags', []),
+        },
+        'notifications': config.get('notifications', {}),
+    }
+
+    # Write temp config for continuous scanner
+    import tempfile
+    import json
+    temp_cfg = Path(output_dir) / '_continuous_config.yaml'
+    temp_cfg.parent.mkdir(parents=True, exist_ok=True)
+    with open(temp_cfg, 'w') as f:
+        yaml.dump(cont_config, f, default_flow_style=False)
+
+    scanner = ContinuousScanner(temp_cfg)
+
+    safe_print("[*] Running continuously (Ctrl+C to stop)...")
+    scanner.run_forever()
 
 
-def run_deep_mode(args):
-    """Run deep scanner"""
-    safe_print("\n[*] Starting Deep Scanner...")
-    
-    from scanners.deep_scan import DeepScanner, DeepScanConfig
-    
-    # Create initial config with CLI arguments
-    config = DeepScanConfig(
-        targets=args.targets if hasattr(args, 'targets') and args.targets else [],
-        program=args.program,
-        username=args.username,
-        skip_ports=args.skip_ports if hasattr(args, 'skip_ports') else False,
-        skip_endpoints=args.skip_web if hasattr(args, 'skip_web') else False,
-        skip_cloud=args.skip_cloud if hasattr(args, 'skip_cloud') else False,
-        skip_waf=args.skip_waf if hasattr(args, 'skip_waf') else False,
-        verbose=args.verbose if hasattr(args, 'verbose') else True,
-        config_file=Path(args.config) if args.config else None,
-    )
-    
-    # Load from YAML file if specified (this will override targets if defined in config)
-    if config.config_file:
-        config.load_from_yaml()
-    
-    # Now check for targets (could come from CLI or config file)
-    if not config.targets:
-        safe_print("[!] Error: No targets specified.")
-        safe_print("    Use -t domain1 -t domain2 OR define targets in config file")
-        sys.exit(1)
-    
-    print(f"Targets: {', '.join(config.targets)}")
-    print(f"Program: {config.program or 'generic'}")
-    
-    # Run scan
-    scanner = DeepScanner(config)
-    scanner.run()
-    
-    safe_print("\n[+] Deep scan complete!")
+def run_recon_mode(config: dict, targets: list):
+    """Run Wiz 5-phase reconnaissance."""
+    from scanners.wiz_recon import WizReconScanner, save_results
 
+    program = config.get('program', {}).get('name')
+    username = config.get('program', {}).get('h1_username', 'yourh1username')
+    thoroughness = config.get('phases', {}).get('dns_enumeration', {}).get('thoroughness', 'medium')
+    output_dir = Path(config.get('output', {}).get('directory', 'results')) / 'recon'
 
-def run_recon_mode(args):
-    """Run Wiz reconnaissance"""
-    safe_print("\n[*] Starting Wiz Reconnaissance...")
-    print(f"Target: {args.target}")
-    
-    mode = 'thorough' if args.thorough else ('quick' if args.quick else 'normal')
-    print(f"Mode: {mode}\n")
-    
-    from scanners.wiz_recon import WizReconScanner
-    
     scanner = WizReconScanner(
-        target=args.target,
-        output_dir=Path(args.output)
+        program=program,
+        username=username,
+        thoroughness=thoroughness
     )
-    
-    if args.quick:
-        scanner.run_quick_mode()
-    elif args.thorough:
-        scanner.run_thorough_mode()
-    else:
-        scanner.run()
-        
+
+    for target in targets:
+        if SHUTDOWN:
+            break
+        result = scanner.scan(target)
+        save_results(result, output_dir)
+
     safe_print("\n[+] Reconnaissance complete!")
-    print(f"Results: {args.output}")
 
 
-def run_discover_mode(args):
-    """Run discovery mode"""
-    safe_print("\n[*] Starting Asset Discovery...")
-    print(f"Target: {args.target}")
-    print(f"Tools: {', '.join(args.tools)}\n")
-    
+def run_discover_mode(config: dict, targets: list):
+    """Run fast subdomain/asset discovery only."""
     from discovery.enhanced_subdomain_scanner import EnhancedSubdomainScanner
-    
-    scanner = EnhancedSubdomainScanner(
-        domain=args.target,
-        output_dir=Path(args.output)
+
+    output_dir = Path(config.get('output', {}).get('directory', 'results')) / 'discovery'
+
+    for target in targets:
+        if SHUTDOWN:
+            break
+        safe_print(f"[*] Discovering assets for: {target}")
+        scanner = EnhancedSubdomainScanner(
+            domain=target,
+            output_dir=output_dir
+        )
+        subdomains = scanner.discover_all(tools=['all'])
+        safe_print(f"[+] Discovered {len(subdomains)} subdomains for {target}")
+
+    safe_print("\n[+] Discovery complete!")
+
+
+def run_parallel_mode(config: dict, targets: list):
+    """Run parallel streaming scanner."""
+    from scanners.parallel_scan import ParallelScanner
+
+    program = config.get('program', {}).get('name')
+    username = config.get('program', {}).get('h1_username', 'yourh1username')
+    workers = config.get('workers', {}).get('scan_workers', 3)
+    output_dir = Path(config.get('output', {}).get('directory', 'results')) / 'parallel'
+
+    # Get enabled techniques from config
+    techniques = None
+    wh2025 = config.get('advanced', {}).get('web_hacking_2025', {})
+    if wh2025.get('enabled', True):
+        techs = wh2025.get('techniques', {})
+        techniques = [name for name, enabled in techs.items() if enabled]
+
+    scanner = ParallelScanner(
+        targets=targets,
+        output_dir=output_dir,
+        program=program,
+        username=username,
+        num_workers=workers,
+        techniques=techniques,
     )
-    
-    # Run discovery
-    subdomains = scanner.discover_all(tools=args.tools)
-    
-    safe_print(f"\n[+] Discovered {len(subdomains)} subdomains!")
-    print(f"Results: {args.output}")
+
+    scanner.run()
+
+    safe_print("\n[+] Parallel scan complete!")
+
+
+# =============================================================================
+# MODE DISPATCH
+# =============================================================================
+
+MODE_RUNNERS = {
+    'deep': run_deep_mode,
+    'fullrecon': run_fullrecon_mode,
+    'intelligent': run_intelligent_mode,
+    'continuous': run_continuous_mode,
+    'recon': run_recon_mode,
+    'discover': run_discover_mode,
+    'parallel': run_parallel_mode,
+}
 
 
 def main():
-    """Main entry point"""
-    parser = create_parser()
+    """Main entry point - config-driven scanner."""
+    parser = argparse.ArgumentParser(
+        description='Bug Bounty Scanner - Config-driven unified CLI',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Everything is controlled via scan_config.yaml.
+
+Quick start:
+  1. cp scan_config.yaml.test scan_config.yaml
+  2. Edit scan_config.yaml (set targets, scan_mode, etc.)
+  3. python scanner.py
+
+Override config path:
+  python scanner.py -c /path/to/my_config.yaml
+        '''
+    )
+
+    parser.add_argument(
+        '-c', '--config',
+        default='scan_config.yaml',
+        help='Path to scan configuration file (default: scan_config.yaml)'
+    )
+
     args = parser.parse_args()
-    
-    # Check mode
-    if not args.mode:
-        parser.print_help()
+
+    # Load configuration
+    config_path = Path(args.config)
+    config = load_config(config_path)
+
+    # Resolve targets
+    targets = resolve_targets(config)
+    if not targets:
+        safe_print("[!] No targets specified in config file.")
+        safe_print("    Edit 'targets.domains' in your scan_config.yaml")
         sys.exit(1)
-        
-    # Route to appropriate mode
+
+    # Determine scan mode
+    mode = config.get('scan_mode', 'deep')
+    if mode not in MODE_RUNNERS:
+        safe_print(f"[!] Unknown scan_mode: '{mode}'")
+        safe_print(f"    Valid modes: {', '.join(MODE_RUNNERS.keys())}")
+        sys.exit(1)
+
+    # Print config summary
+    if config.get('safety', {}).get('show_review', True):
+        print_config_summary(config, targets)
+
+    # Confirm if needed
+    if not confirm_scan(config):
+        safe_print("[*] Scan cancelled.")
+        sys.exit(0)
+
+    # Run the selected scan mode
     try:
-        if args.mode == 'fullrecon':
-            run_fullrecon_mode(args)
-        elif args.mode == 'intelligent':
-            run_intelligent_mode(args)
-        elif args.mode == 'continuous':
-            run_continuous_mode(args)
-        elif args.mode == 'deep':
-            run_deep_mode(args)
-        elif args.mode == 'recon':
-            run_recon_mode(args)
-        elif args.mode == 'discover':
-            run_discover_mode(args)
-        else:
-            print(f"Unknown mode: {args.mode}")
-            sys.exit(1)
-            
+        runner = MODE_RUNNERS[mode]
+        runner(config, targets)
     except KeyboardInterrupt:
         safe_print("\n\n[!] Scan interrupted by user")
         sys.exit(0)
