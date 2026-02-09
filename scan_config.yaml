@@ -14,10 +14,10 @@
 # =============================================================================
 
 # Program name: "amazon", "shopify", "anduril", or null for generic
-program: null
+program: amazon
 
 # Your HackerOne username (required for some programs)
-h1_username: "your_h1_username"
+h1_username: "sengtocxoen"
 
 # =============================================================================
 # TARGETS
@@ -25,7 +25,7 @@ h1_username: "your_h1_username"
 
 # List your target domains here
 targets:
-  - "example.com"
+  - "amazon.com"
   # - "app.example.com"
   # - "api.example.com"
 
@@ -42,9 +42,10 @@ custom_headers: {}
 # RATE LIMITING
 # =============================================================================
 
-rate_limit: 5           # Requests per second
-request_delay: 0.2      # Delay between requests (seconds)
-request_timeout: 30     # Request timeout (seconds)
+# Amazon VRP requires MAX 5 requests/second - we use 4.5 for safety margin
+rate_limit: 4.5             # Requests per second (CRITICAL: max 5 req/s)
+request_delay: 0.22         # 220ms delay between requests
+request_timeout: 30         # Request timeout (seconds)
 
 # =============================================================================
 # SCAN PHASES
