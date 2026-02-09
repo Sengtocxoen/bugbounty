@@ -97,9 +97,9 @@ def _available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def _run(cmd: List[str], timeout: int = 600) -> Optional[str]:
+def _run(cmd: List[str], timeout: int = None) -> Optional[str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True)
         return r.stdout.strip() if r.returncode == 0 else r.stdout.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None

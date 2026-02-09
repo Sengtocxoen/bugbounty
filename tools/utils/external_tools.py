@@ -101,7 +101,7 @@ class SubfinderWrapper:
     """
 
     def __init__(self, timeout: int = 300):
-        self.timeout = timeout
+        self.timeout = None
         self.available = ToolChecker.is_available("subfinder")
 
     def run(self, domain: str, sources: List[str] = None,
@@ -185,8 +185,8 @@ class PurednsWrapper:
         result = wrapper.bruteforce("example.com", wordlist_path)
     """
 
-    def __init__(self, resolvers_file: str = None, timeout: int = 600):
-        self.timeout = timeout
+    def __init__(self, resolvers_file: str = None, timeout: int = None):
+        self.timeout = None  # No timeout - run until complete
         self.available = ToolChecker.is_available("puredns")
         self.resolvers_file = resolvers_file
 
@@ -350,8 +350,8 @@ class AlterxWrapper:
         result = wrapper.generate(known_subdomains)
     """
 
-    def __init__(self, timeout: int = 120):
-        self.timeout = timeout
+    def __init__(self, timeout: int = None):
+        self.timeout = None  # No timeout - run until complete
         self.available = ToolChecker.is_available("alterx")
 
     def generate(self, subdomains: List[str], patterns: List[str] = None,
@@ -484,8 +484,8 @@ class HttpxWrapper:
         results = wrapper.probe(subdomains)
     """
 
-    def __init__(self, timeout: int = 30, threads: int = 50, rate_limit: int = 150):
-        self.timeout = timeout
+    def __init__(self, timeout: int = None, threads: int = 50, rate_limit: int = 150):
+        self.timeout = None  # No timeout - run until complete
         self.threads = threads
         self.rate_limit = rate_limit
         self.available = ToolChecker.is_available("httpx")
@@ -538,7 +538,7 @@ class HttpxWrapper:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout * len(targets) // self.threads + 60
+                timeout=None  # No timeout - run until complete
             )
 
             parsed_results = []
@@ -673,8 +673,8 @@ class NmapWrapper:
         result = wrapper.scan_ports(target, ports=[80, 443, 8080])
     """
 
-    def __init__(self, timeout: int = 300):
-        self.timeout = timeout
+    def __init__(self, timeout: int = None):
+        self.timeout = None  # No timeout - run until complete
         self.available = ToolChecker.is_available("nmap")
 
     def scan_ports(self, target: str, ports: List[int] = None,

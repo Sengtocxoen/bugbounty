@@ -101,10 +101,11 @@ def _available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def _run(cmd: List[str], timeout: int = 600, stdin_data: str = None) -> Optional[str]:
+def _run(cmd: List[str], timeout: int = None, stdin_data: str = None) -> Optional[str]:
+    """Run a command and return stdout. No timeout - runs until complete."""
     try:
         r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
+            cmd, capture_output=True, text=True,
             input=stdin_data
         )
         return r.stdout.strip()

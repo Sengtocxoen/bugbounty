@@ -414,7 +414,6 @@ class ContinuousScanner:
                     [tool, '-d', target, '-silent'],
                     capture_output=True,
                     text=True,
-                    timeout=300
                 )
                 subs = {line.strip() for line in result.stdout.splitlines() if line.strip()}
                 current_subs.update(subs)
@@ -463,7 +462,7 @@ class ContinuousScanner:
             cmd.extend(['-tags', ','.join(self.config['nuclei']['tags'])])
             
         try:
-            subprocess.run(cmd, timeout=600, check=False)
+            subprocess.run(cmd, check=False)
             
             # Parse results
             findings = []

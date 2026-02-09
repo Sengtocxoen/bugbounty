@@ -86,7 +86,6 @@ class NucleiScanner:
             self.logger.info("Updating Nuclei templates...")
             subprocess.run(
                 ['nuclei', '-update-templates', '-silent'],
-                timeout=60,
                 check=False
             )
             self.logger.info("Nuclei templates updated successfully")
@@ -277,7 +276,6 @@ class NucleiScanner:
             self.logger.info(f"Running: {' '.join(cmd)}")
             result = subprocess.run(
                 cmd,
-                timeout=self.config.get('timeout', 300) * len(targets),
                 capture_output=True,
                 text=True,
                 check=False

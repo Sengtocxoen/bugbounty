@@ -284,13 +284,13 @@ class DeepScanner:
         # Program-specific config loaded from YAML file, NOT hardcoded
         # Rate limits, headers, timeouts all come from config file
         self.program_config = None
-        if config.custom_rate_limit > 0 or config.custom_headers or config.custom_timeout > 0:
+        if config.custom_rate_limit > 0 or config.custom_headers:
             # Create a simple config object from YAML values
             from types import SimpleNamespace
             self.program_config = SimpleNamespace(
                 rate_limit=config.custom_rate_limit if config.custom_rate_limit > 0 else 5,
                 request_delay=config.custom_request_delay if config.custom_request_delay > 0 else 0.2,
-                request_timeout=config.custom_timeout if config.custom_timeout > 0 else 30,
+                request_timeout=None,  # No timeout - run until complete
                 custom_headers=config.custom_headers,
                 user_agent=config.custom_headers.get('User-Agent', 'Mozilla/5.0 (BugBountyScanner)')
             )
