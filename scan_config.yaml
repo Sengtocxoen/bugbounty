@@ -2,6 +2,14 @@
 # Copy this file and customize for your scans
 
 # =============================================================================
+# SCAN MODE - Which tool to use
+# =============================================================================
+
+# Options: deep, fullrecon, intelligent, continuous, recon, discover, parallel
+# Leave commented out to be prompted interactively
+# scan_mode: "deep"
+
+# =============================================================================
 # PROGRAM & USER INFO
 # =============================================================================
 
