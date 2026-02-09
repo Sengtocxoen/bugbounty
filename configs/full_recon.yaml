@@ -1,0 +1,1001 @@
+# =============================================================================
+# FULL RECONNAISSANCE CONFIGURATION
+# Inspired by reNgine scan engines + reconftw deep mode
+# This is the MAXIMUM depth configuration - every phase enabled
+# =============================================================================
+
+# =============================================================================
+# GENERAL
+# =============================================================================
+general:
+  # Program: "amazon", "shopify", "anduril", or null for generic
+  program: null
+  h1_username: "your_h1_username"
+
+  # List your target domains
+  targets:
+    - "example.com"
+    # - "app.example.com"
+
+  # Scope control
+  scope:
+    in_scope_file: null          # Path to inscope domains file
+    out_of_scope_file: null      # Path to out-of-scope domains file
+    recursive: true              # Recurse into discovered subdomains
+    filter_wildcards: true       # Remove wildcard DNS entries
+
+  # Custom HTTP headers
+  custom_headers: {}
+    # X-HackerOne-Research: "username"
+    # X-Bug-Bounty: "researcher"
+
+  # Proxy (Burp Suite / ZAP)
+  proxy: null                    # e.g. "http://127.0.0.1:8080"
+  proxy_list: []                 # Rotating proxies for evasion
+
+  # Output
+  output_dir: "results/fullrecon"
+  save_json: true
+  save_txt: true
+  save_html: true
+
+  # Notifications (new findings alerts)
+  notifications:
+    enabled: false
+    slack_webhook: null
+    discord_webhook: null
+    telegram_bot_token: null
+    telegram_chat_id: null
+
+  # Diff mode - compare against previous scan
+  diff_mode: false
+  previous_results: null         # Path to previous results dir
+
+# =============================================================================
+# RATE LIMITING & PERFORMANCE
+# =============================================================================
+performance:
+  # Global rate limits
+  rate_limit: 150                # Requests per second (reconftw default)
+  request_delay: 0               # Extra delay between requests (seconds)
+  request_timeout: 30            # HTTP timeout (seconds)
+
+  # Per-tool thread counts (reconftw-inspired)
+  threads:
+    subfinder: 100
+    puredns: 100
+    httpx: 50
+    nuclei: 150
+    ffuf: 40
+    katana: 20
+    naabu: 50
+    dalfox: 30
+    sqlmap: 5
+    arjun: 20
+    feroxbuster: 30
+    gospider: 20
+    gau: 10
+    hakrawler: 10
+    amass: 30
+
+  # Adaptive rate limiting
+  adaptive:
+    enabled: true
+    backoff_on_429: true         # Slow down on HTTP 429
+    backoff_on_503: true         # Slow down on HTTP 503
+    max_retries: 3
+    backoff_multiplier: 2.0
+
+  # Max workers for parallel phases
+  max_workers: 10
+
+# =============================================================================
+# PHASE 1: OSINT (Open Source Intelligence)
+# =============================================================================
+osint:
+  enabled: true
+
+  # WHOIS lookup
+  whois:
+    enabled: true
+
+  # Email harvesting
+  emails:
+    enabled: true
+    # Tools: emailfinder, hunter.io API
+    hunter_api_key: null
+
+  # Google dorking
+  google_dorks:
+    enabled: true
+    max_results: 100
+    # Dork categories
+    sensitive_files: true        # site:target ext:sql|bak|log|env
+    login_pages: true            # site:target inurl:login|admin|dashboard
+    exposed_documents: true      # site:target ext:pdf|doc|xlsx|csv
+    error_pages: true            # site:target "error"|"warning"|"stack trace"
+    api_endpoints: true          # site:target inurl:api|graphql|swagger
+
+  # GitHub/GitLab dorking (credential leaks)
+  github_dorking:
+    enabled: true
+    github_token: null           # Required for higher rate limits
+    gitlab_token: null
+    max_results: 100
+    # What to search for
+    search_passwords: true
+    search_api_keys: true
+    search_tokens: true
+    search_internal_urls: true
+    search_env_files: true
+
+  # Repository analysis (trufflehog / gitleaks)
+  repo_scanning:
+    enabled: true
+    # Use trufflehog for deep commit history scanning
+    trufflehog: true
+    gitleaks: true
+    max_repos: 50
+
+  # Document metadata extraction (metagoofil)
+  metadata:
+    enabled: true
+    file_types:
+      - pdf
+      - doc
+      - docx
+      - xls
+      - xlsx
+      - ppt
+      - pptx
+    max_files: 100
+
+  # API leak detection (porch-pirate / SwaggerSpy)
+  api_leaks:
+    enabled: true
+    search_postman: true         # Search Postman public workspaces
+    search_swagger: true         # Search for exposed Swagger/OpenAPI docs
+
+  # Email security (SPF/DMARC/DKIM)
+  email_security:
+    enabled: true
+    check_spf: true
+    check_dmarc: true
+    check_dkim: true
+    check_spoofability: true     # spoofcheck
+
+  # Cloud enumeration (S3, Azure, GCP)
+  cloud_enum:
+    enabled: true
+    check_s3: true
+    check_azure: true
+    check_gcp: true
+    check_digitalocean: true
+    test_permissions: true       # Check read/write/list access
+    # Microsoft tenant mapping (msftrecon)
+    ms365_enum: true
+
+  # Misconfiguration mapping
+  misconfig_mapper:
+    enabled: true                # Check for third-party service misconfigs
+
+# =============================================================================
+# PHASE 2: SUBDOMAIN ENUMERATION
+# =============================================================================
+subdomains:
+  enabled: true
+
+  # --- Passive enumeration ---
+  passive:
+    enabled: true
+    # Tools
+    subfinder: true
+    amass: true
+    assetfinder: true
+    github_subdomains: true
+    # Data sources
+    crtsh: true                  # Certificate Transparency logs
+    shodan: true
+    censys: true
+    virustotal: true
+    securitytrails: true
+    # API keys
+    shodan_api_key: null
+    censys_api_id: null
+    censys_api_secret: null
+    virustotal_api_key: null
+    securitytrails_api_key: null
+
+  # --- Active DNS brute force ---
+  bruteforce:
+    enabled: true
+    tool: "puredns"              # puredns or massdns
+    wordlist: "/opt/SecLists/Discovery/DNS/subdomains-top1million-110000.txt"
+    custom_wordlist: null
+    resolvers: "/opt/wordlists/resolvers.txt"
+    # Deep mode: use larger wordlist
+    deep_wordlist: "/opt/wordlists/best-dns-wordlist.txt"
+    use_deep_wordlist: true
+
+  # --- Permutation / mutation ---
+  permutations:
+    enabled: true
+    # Tools: gotator, ripgen, regulator, subwiz
+    gotator: true
+    ripgen: true
+    # Max permutations per subdomain
+    max_permutations: 10000
+    # Custom patterns
+    patterns:
+      - "{word}-{subdomain}"
+      - "{subdomain}-{word}"
+      - "{word}.{subdomain}"
+      - "{subdomain}.{word}"
+      - "{word}{subdomain}"
+      - "{subdomain}{word}"
+
+  # --- DNS resolution ---
+  resolution:
+    enabled: true
+    tool: "dnsx"
+    check_noerror: true          # Collect NOERROR responses
+    resolve_all: true            # Resolve A, AAAA, CNAME, MX, NS, TXT
+
+  # --- Web scraping for subdomains ---
+  scraping:
+    enabled: true
+    katana: true                 # Crawl pages/JS for subdomain references
+    gospider: true
+    hakrawler: true
+
+  # --- Certificate analysis ---
+  certificates:
+    enabled: true
+    tlsx: true                   # TLS certificate inspection
+    ct_logs: true                # Certificate Transparency
+
+  # --- Analytics relationships ---
+  analytics:
+    enabled: true
+    # Find domains sharing Google Analytics / AdSense IDs
+    tracking_codes: true
+
+  # --- Recursive enumeration ---
+  recursive:
+    enabled: true
+    max_depth: 3
+    # Re-run passive + bruteforce on discovered subdomains
+    recursive_passive: true
+    recursive_bruteforce: false  # Very slow, enable for maximum depth
+
+  # --- Subdomain takeover ---
+  takeover:
+    enabled: true
+    nuclei_takeover: true
+    dnstake: true
+    subjack: true
+
+  # --- Zone transfer ---
+  zone_transfer:
+    enabled: true                # Test for AXFR misconfiguration
+
+  # --- Reverse IP / CIDR ---
+  reverse_ip:
+    enabled: true
+    hakip2host: true
+    # CIDR range discovery from ASN
+    asn_lookup: true
+
+# =============================================================================
+# PHASE 3: HOST ANALYSIS
+# =============================================================================
+host_analysis:
+  enabled: true
+
+  # --- HTTP probing ---
+  probing:
+    enabled: true
+    tool: "httpx"
+    # Standard ports
+    ports: [80, 443]
+    # Uncommon ports (reconftw style)
+    uncommon_ports: true
+    extra_ports: [81, 300, 591, 593, 832, 981, 1010, 1311, 1099, 2082, 2087,
+                  2095, 2096, 2480, 3000, 3128, 3333, 4243, 4567, 4711, 4712,
+                  4993, 5000, 5104, 5108, 5800, 6543, 7000, 7396, 7474, 8000,
+                  8001, 8008, 8014, 8042, 8069, 8080, 8081, 8083, 8088, 8090,
+                  8091, 8118, 8123, 8172, 8222, 8243, 8280, 8281, 8333, 8443,
+                  8500, 8834, 8880, 8888, 8983, 9000, 9043, 9060, 9080, 9090,
+                  9091, 9200, 9443, 9800, 9981, 12443, 16080, 18091, 18092,
+                  20720, 28017]
+    # Collect metadata
+    collect_title: true
+    collect_status: true
+    collect_tech: true
+    collect_server: true
+    collect_content_length: true
+    collect_ip: true
+    collect_cname: true
+    collect_cdn: true
+    collect_tls: true
+    follow_redirects: true
+
+  # --- Port scanning ---
+  port_scan:
+    enabled: true
+    # naabu for fast scanning, nmap for service detection
+    naabu:
+      enabled: true
+      scan_type: "s"             # SYN scan
+      top_ports: 1000            # or "full" for all 65535
+      rate: 5000
+    nmap:
+      enabled: true
+      service_detection: true    # -sV
+      script_scan: true          # -sC
+      vuln_scripts: true         # --script vulners
+      os_detection: false        # -O (requires root)
+      full_port: false           # -p- (slow, enable for maximum depth)
+    # Passive port scanning (smap / shodan)
+    passive_ports:
+      enabled: true
+      smap: true
+      shodan: true
+
+  # --- CDN detection ---
+  cdn_detection:
+    enabled: true
+    tool: "cdncheck"
+    # Skip CDN-protected hosts for active scanning
+    skip_cdn_active: false
+
+  # --- WAF detection ---
+  waf_detection:
+    enabled: true
+    tool: "wafw00f"
+    # Evasion when WAF detected
+    auto_evasion: true
+    evasion_techniques:
+      - header_spoofing          # X-Forwarded-For, X-Real-IP
+      - case_variation           # Mixed case payloads
+      - encoding                 # Double URL encode, Unicode
+      - chunked_transfer         # Chunked Transfer-Encoding
+      - null_bytes               # Null byte injection
+
+  # --- IP geolocation ---
+  geolocation:
+    enabled: true
+    tool: "ipinfo"
+
+  # --- Service credential testing ---
+  credential_spraying:
+    enabled: false               # DANGEROUS - enable only with authorization
+    tool: "brutespray"
+    # Only test common services
+    services: ["ssh", "ftp", "mysql", "postgres", "redis", "mongodb"]
+    # Use default credentials only
+    default_creds_only: true
+
+  # --- IPv6 enumeration ---
+  ipv6:
+    enabled: false               # Optional
+    resolve_aaaa: true
+
+# =============================================================================
+# PHASE 4: WEB ANALYSIS
+# =============================================================================
+web_analysis:
+  enabled: true
+
+  # --- Screenshot capture ---
+  screenshots:
+    enabled: true
+    tool: "nuclei"               # nuclei headless or gowitness
+    # Capture all live hosts
+    all_hosts: true
+
+  # --- Virtual host fuzzing ---
+  vhost_fuzzing:
+    enabled: true
+    tool: "ffuf"
+    wordlist: "/opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt"
+    # Filter by response size difference
+    auto_calibrate: true
+
+  # --- CMS detection ---
+  cms_detection:
+    enabled: true
+    tool: "cmseek"
+    # Detect WordPress, Joomla, Drupal, etc.
+    # Auto-run WPScan if WordPress detected
+    wpscan_on_wordpress: true
+    wpscan_api_token: null
+
+  # --- URL collection ---
+  url_collection:
+    enabled: true
+    # Passive URL collection
+    waybackurls: true
+    gau: true
+    # Active crawling
+    katana: true
+    gospider: true
+    hakrawler: true
+    # GitHub endpoint mining
+    github_endpoints: true
+    # JavaScript endpoint extraction
+    js_endpoints: true
+    # Depth
+    crawl_depth: 5
+    max_urls: 50000
+    # URL classification with gf patterns
+    gf_patterns:
+      enabled: true
+      patterns:
+        - xss
+        - sqli
+        - ssrf
+        - redirect
+        - rce
+        - idor
+        - ssti
+        - lfi
+        - debug_logic
+
+  # --- JavaScript analysis ---
+  js_analysis:
+    enabled: true
+    # Extract secrets, endpoints, DOM sinks
+    secret_detection: true
+    endpoint_extraction: true
+    dom_sink_detection: true
+    # Validate discovered secrets
+    secret_validation: true
+    # subjs for JS file discovery
+    subjs: true
+    # xnLinkFinder for link extraction
+    xnlinkfinder: true
+    # jsluice for modern JS parsing
+    jsluice: true
+    # Source map retrieval
+    sourcemaps:
+      enabled: true
+      tool: "sourcemapper"
+    # Retire.js for known vulnerable libraries
+    retirejs: true
+
+  # --- Favicon analysis ---
+  favicon:
+    enabled: true
+    tool: "fav-up"
+    # Reveal real IPs behind CDN via favicon hash
+    shodan_lookup: true
+
+  # --- Technology detection ---
+  tech_detection:
+    enabled: true
+    # Framework fingerprinting
+    detect_frameworks: true
+    detect_servers: true
+    detect_cms: true
+    detect_languages: true
+    detect_waf: true
+    # Technology-specific attack recommendations
+    suggest_attacks: true
+
+  # --- GraphQL detection ---
+  graphql:
+    enabled: true
+    auto_detect: true
+    introspection: true
+    # GQLSpection for deep analysis
+    gqlspection: true
+
+  # --- Parameter discovery ---
+  params:
+    enabled: true
+    tool: "arjun"
+    # Sources for parameter names
+    wordlist: "/opt/SecLists/Discovery/Web-Content/burp-parameter-names.txt"
+    # Also mine parameters from collected URLs
+    mine_from_urls: true
+    # x8 for hidden parameters
+    x8: true
+
+  # --- WebSocket testing ---
+  websockets:
+    enabled: true
+    detect_upgrade: true
+    test_origin: true            # CSWSH testing
+
+  # --- gRPC reflection ---
+  grpc:
+    enabled: true
+    tool: "grpcurl"
+    ports: [50051, 50052, 9090, 443]
+
+  # --- Directory/file fuzzing ---
+  fuzzing:
+    enabled: true
+    tool: "ffuf"
+    wordlist: "/opt/SecLists/Discovery/Web-Content/directory-list-2.3-medium.txt"
+    extensions: ["php", "asp", "aspx", "jsp", "html", "js", "json", "xml",
+                 "txt", "cfg", "env", "bak", "old", "zip", "tar.gz", "sql",
+                 "log", "yml", "yaml", "toml", "ini", "conf", "config"]
+    recursive: true
+    max_depth: 3
+    # Soft-404 detection
+    soft_404_detection: true
+    # IIS shortname scanning
+    iis_shortnames:
+      enabled: true
+      tool: "shortscan"
+    # Rate limit
+    rate: 150
+    timeout: 900                 # 15 min per target
+
+  # --- Response deduplication ---
+  deduplication:
+    enabled: true
+    similarity_threshold: 0.85
+    # Skip duplicate pages (massive speedup)
+    skip_duplicates: true
+
+# =============================================================================
+# PHASE 5: VULNERABILITY SCANNING
+# =============================================================================
+vulnerability_scan:
+  enabled: true
+
+  # --- Nuclei CVE scanning ---
+  nuclei:
+    enabled: true
+    severity:
+      - critical
+      - high
+      - medium
+      - low
+      - info
+    tags: []                     # Empty = all tags
+    exclude_tags:
+      - dos                      # Never run DoS
+      - fuzz                     # Skip generic fuzzing (we do our own)
+    # Custom templates
+    custom_templates: null
+    # Update templates before scan
+    update_templates: true
+    # Scan targets
+    scan_subdomains: true
+    scan_endpoints: true
+    scan_ports: true
+    # Performance
+    rate_limit: 150
+    bulk_size: 100
+    concurrency: 50
+    timeout: 30
+    retries: 2
+
+  # --- XSS testing ---
+  xss:
+    enabled: true
+    tool: "dalfox"
+    # Also run reflected XSS detection from existing tools
+    blind_xss: true
+    blind_xss_callback: null     # Your blind XSS hunter URL
+    dom_xss: true
+    stored_xss: false            # Requires write access authorization
+    # Custom payloads
+    custom_payloads: null
+
+  # --- SQL injection ---
+  sqli:
+    enabled: true
+    # Tools
+    sqlmap: true
+    ghauri: true                 # Modern SQLi tool
+    # sqlmap options
+    sqlmap_level: 3
+    sqlmap_risk: 2
+    sqlmap_threads: 5
+    # Time-based detection
+    time_based: true
+    # Error-based detection
+    error_based: true
+    # Boolean-based detection
+    boolean_based: true
+
+  # --- CORS misconfiguration ---
+  cors:
+    enabled: true
+    tool: "corsy"
+    # Test origin reflection
+    test_null_origin: true
+    test_subdomain_origin: true
+    test_wildcard: true
+
+  # --- SSL/TLS audit ---
+  ssl_tls:
+    enabled: true
+    tool: "testssl"
+    # Check for weak ciphers, expired certs, etc.
+    full_audit: true
+
+  # --- Open redirect ---
+  open_redirect:
+    enabled: true
+    tool: "oralyzer"
+    custom_payloads: null
+
+  # --- SSRF ---
+  ssrf:
+    enabled: true
+    # Use interactsh for OOB detection
+    interactsh: true
+    # Cloud metadata endpoints
+    test_aws_metadata: true
+    test_gcp_metadata: true
+    test_azure_metadata: true
+    # Custom callback URL
+    callback_url: null
+    # Protocol wrappers
+    test_file_protocol: true
+    test_gopher: true
+    test_dict: true
+
+  # --- CRLF injection ---
+  crlf:
+    enabled: true
+    tool: "crlfuzz"
+
+  # --- Local file inclusion ---
+  lfi:
+    enabled: true
+    # Payloads from reconftw
+    wordlist: "/opt/SecLists/Fuzzing/LFI/LFI-Jhaddix.txt"
+    # Path traversal depth
+    traversal_depth: 10
+
+  # --- Server-side template injection ---
+  ssti:
+    enabled: true
+    # Template engines to test
+    engines:
+      - jinja2
+      - twig
+      - freemarker
+      - velocity
+      - smarty
+      - mako
+      - erb
+      - pug
+      - slim
+
+  # --- Command injection ---
+  command_injection:
+    enabled: true
+    tool: "commix"
+    # OS command execution testing
+    time_based: true
+    blind: true
+
+  # --- Prototype pollution ---
+  prototype_pollution:
+    enabled: true
+    tool: "ppmap"
+
+  # --- HTTP request smuggling ---
+  smuggling:
+    enabled: true
+    tool: "smuggler"
+    # Test CL.TE, TE.CL, TE.TE
+    clte: true
+    tecl: true
+    tete: true
+    # HTTP/2 downgrade
+    h2_downgrade: true
+
+  # --- Web cache poisoning/deception ---
+  cache_attacks:
+    enabled: true
+    # Unkeyed headers
+    test_unkeyed_headers: true
+    # Web cache deception
+    test_cache_deception: true
+    # Stale content
+    test_stale_content: true
+
+  # --- 4XX bypass ---
+  four_xx_bypass:
+    enabled: true
+    tool: "nomore403"
+    # Bypass techniques
+    header_bypass: true          # X-Original-URL, X-Rewrite-URL
+    method_bypass: true          # Try different HTTP methods
+    path_bypass: true            # Path normalization tricks
+
+  # --- Broken link hijacking ---
+  broken_links:
+    enabled: true
+    tool: "katana"
+    # Check for hijackable broken links
+    check_hijackable: true
+
+  # --- Authentication bypass ---
+  auth_bypass:
+    enabled: true
+    # JWT vulnerabilities
+    jwt: true
+    # OAuth misconfigurations
+    oauth: true
+    # SAML attacks
+    saml: true
+    # Path-based bypasses
+    path_bypass: true
+
+  # --- Deserialization ---
+  deserialization:
+    enabled: true
+    # Test Java, .NET, PHP, Python, Node.js
+    java: true
+    dotnet: true
+    php: true
+    python: true
+    nodejs: true
+
+  # --- XXE (XML External Entity) ---
+  xxe:
+    enabled: true
+    # File read
+    test_file_read: true
+    # SSRF via XXE
+    test_ssrf: true
+    # SVG XXE
+    test_svg: true
+    # OOB XXE
+    test_oob: true
+
+  # --- XS-Leaks ---
+  xs_leaks:
+    enabled: true
+    test_timing: true
+    test_error_events: true
+    test_frame_counting: true
+
+  # --- Framework-specific vulnerabilities ---
+  framework_vulns:
+    enabled: true
+    # Auto-detect and test
+    spring_boot: true            # Actuator endpoints, SpEL injection
+    aspnet: true                 # ViewState, debug mode
+    php: true                    # Info disclosure, type juggling
+    nodejs: true                 # Prototype pollution, SSJS injection
+    rails: true                  # Mass assignment, deserialization
+    django: true                 # Debug mode, IDOR
+    laravel: true                # Debug mode, .env exposure
+
+# =============================================================================
+# PHASE 6: VERIFICATION & VALIDATION
+# =============================================================================
+verification:
+  enabled: true
+
+  # Number of concurrent verification threads
+  threads: 15
+
+  # --- What to verify ---
+  verify_redirects: true
+  verify_services: true          # Exposed services (Redis, FTP, etc.)
+  verify_git_exposure: true      # .git directory exposure
+  verify_graphql: true           # GraphQL introspection
+  verify_ssti: true              # Template injection
+  verify_admin_panels: true      # Admin panel detection
+  verify_api_endpoints: true     # API documentation exposure
+  verify_backup_files: true      # Database dumps, archives
+  verify_default_credentials: false  # Enable only with authorization
+
+  # --- Out-of-band detection ---
+  oob_detection:
+    enabled: true
+    tool: "interactsh"
+    # Test for blind vulnerabilities
+    blind_xss: true
+    blind_ssrf: true
+    blind_xxe: true
+    blind_rce: true
+    blind_sqli: true
+    # Callback server
+    custom_server: null          # Your own OOB server
+
+  # --- False positive reduction ---
+  false_positive_filter:
+    enabled: true
+    # Active credential validation
+    validate_secrets: true
+    # Response pattern analysis
+    pattern_analysis: true
+    # Confidence threshold (0-100)
+    min_confidence: 60
+
+  # --- Nuclei verification ---
+  nuclei_verify:
+    enabled: true
+    # Re-run nuclei on findings for confirmation
+    verify_critical: true
+    verify_high: true
+    verify_medium: false
+
+# =============================================================================
+# PHASE 7: VULNERABILITY CHAINING & ESCALATION
+# =============================================================================
+chaining:
+  enabled: true
+
+  # Auto-chain discovered vulnerabilities
+  auto_chain: true
+  chains:
+    ssrf_plus_idor: true         # SSRF + IDOR = Critical
+    xss_plus_csrf: true          # XSS + CSRF = Critical
+    lfi_plus_rce: true           # LFI + RCE = Critical
+    sqli_plus_auth_bypass: true  # SQLi + Auth Bypass = Critical
+    ssrf_plus_cloud_metadata: true  # SSRF + Cloud = Critical
+    open_redirect_plus_oauth: true  # Redirect + OAuth = Account Takeover
+    xxe_plus_ssrf: true          # XXE + SSRF = Internal Network Access
+    ssti_plus_rce: true          # SSTI + RCE = Critical
+
+  # Deep exploitation on chained findings
+  deep_exploit: false            # Enable for maximum depth (careful!)
+
+# =============================================================================
+# PHASE 8: REPORTING
+# =============================================================================
+reporting:
+  enabled: true
+
+  # Output formats
+  formats:
+    json: true
+    txt: true
+    html: true
+    markdown: true
+    csv: true                    # For spreadsheet analysis
+
+  # Severity scoring
+  scoring:
+    enabled: true
+    # Hotlist: rank findings by exploitability
+    hotlist: true
+    # CVSS scoring where applicable
+    cvss: true
+
+  # Deduplication of findings
+  dedup_findings: true
+
+  # Screenshot evidence
+  include_screenshots: true
+
+  # Request/response evidence
+  include_evidence: true
+
+  # Remediation suggestions
+  include_remediation: true
+
+# =============================================================================
+# SAFETY & COMPLIANCE
+# =============================================================================
+safety:
+  # Confirmation before running
+  confirm_before_run: true
+  show_review: true
+
+  # Maximum thread cap
+  max_threads: 50
+
+  # Never test these
+  never_test:
+    - dos                        # Denial of service
+    - destructive                # Data modification
+    - mass_email                 # Email bombing
+
+  # Rate limit enforcement
+  enforce_rate_limits: true
+
+  # Scope validation
+  strict_scope: true
+
+  # Log all requests
+  request_logging: false         # Enable for debugging
+
+  # Respect robots.txt
+  respect_robots: false          # Bug bounty typically ignores this
+
+# =============================================================================
+# API KEYS (configure for maximum coverage)
+# =============================================================================
+api_keys:
+  shodan: null
+  censys_id: null
+  censys_secret: null
+  virustotal: null
+  securitytrails: null
+  github_token: null
+  gitlab_token: null
+  hunter_io: null
+  whoisxml: null
+  binaryedge: null
+  fullhunt: null
+  zoomeye: null
+  netlas: null
+  criminalip: null
+  publicwww: null
+  urlscan: null
+  intelx: null
+  bevigil: null
+  facebook: null
+  wpscan: null
+  interactsh: null               # Self-hosted interactsh server
+
+# =============================================================================
+# WORDLISTS
+# =============================================================================
+wordlists:
+  subdomains: "/opt/SecLists/Discovery/DNS/subdomains-top1million-110000.txt"
+  subdomains_deep: "/opt/wordlists/best-dns-wordlist.txt"
+  directories: "/opt/SecLists/Discovery/Web-Content/directory-list-2.3-medium.txt"
+  directories_deep: "/opt/SecLists/Discovery/Web-Content/directory-list-2.3-big.txt"
+  files: "/opt/SecLists/Discovery/Web-Content/raft-large-files.txt"
+  parameters: "/opt/SecLists/Discovery/Web-Content/burp-parameter-names.txt"
+  passwords: "/opt/SecLists/Passwords/Common-Credentials/10k-most-common.txt"
+  lfi: "/opt/SecLists/Fuzzing/LFI/LFI-Jhaddix.txt"
+  ssti: "/opt/SecLists/Fuzzing/template-engines-special-vars.txt"
+  vhosts: "/opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt"
+  extensions: "/opt/SecLists/Discovery/Web-Content/web-extensions.txt"
+  resolvers: "/opt/wordlists/resolvers.txt"
+  fuzz: "/opt/SecLists/Fuzzing/fuzz-Bo0oM.txt"
+
+# =============================================================================
+# TOOL PATHS (override if tools are in non-standard locations)
+# =============================================================================
+tool_paths:
+  subfinder: "subfinder"
+  amass: "amass"
+  assetfinder: "assetfinder"
+  puredns: "puredns"
+  massdns: "massdns"
+  dnsx: "dnsx"
+  httpx: "httpx"
+  naabu: "naabu"
+  nmap: "nmap"
+  nuclei: "nuclei"
+  ffuf: "ffuf"
+  feroxbuster: "feroxbuster"
+  katana: "katana"
+  gospider: "gospider"
+  gau: "gau"
+  hakrawler: "hakrawler"
+  waybackurls: "waybackurls"
+  dalfox: "dalfox"
+  sqlmap: "sqlmap"
+  ghauri: "ghauri"
+  commix: "commix"
+  arjun: "arjun"
+  x8: "x8"
+  corsy: "corsy"
+  testssl: "testssl.sh"
+  crlfuzz: "crlfuzz"
+  oralyzer: "oralyzer"
+  interactsh: "interactsh-client"
+  gowitness: "gowitness"
+  cmseek: "cmseek"
+  wafw00f: "wafw00f"
+  cdncheck: "cdncheck"
+  trufflehog: "trufflehog"
+  gitleaks: "gitleaks"
+  ppmap: "ppmap"
+  smuggler: "smuggler"
+  nomore403: "nomore403"
+  shortscan: "shortscan"
+  grpcurl: "grpcurl"
+  sourcemapper: "sourcemapper"
+  anew: "anew"
+  unfurl: "unfurl"
+  qsreplace: "qsreplace"

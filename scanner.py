@@ -28,6 +28,9 @@ def create_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
+  # Full recon (reNgine + reconftw pipeline - MAXIMUM depth)
+  python scanner.py fullrecon -t example.com -c configs/full_recon.yaml
+
   # Intelligent scanning (recommended for large subdomain lists)
   python scanner.py intelligent example.com -s subdomains.txt
 
@@ -48,7 +51,34 @@ For more help: python scanner.py <mode> --help
     )
     
     subparsers = parser.add_subparsers(dest='mode', help='Scanning mode')
-    
+
+    # === FULL RECON MODE (reNgine + reconftw) ===
+    fullrecon_parser = subparsers.add_parser(
+        'fullrecon',
+        help='Full recon pipeline (reNgine + reconftw) - MAXIMUM depth scanning',
+        description='''Full Reconnaissance Scanner: OSINT -> DNS Enum -> Host Analysis ->
+Web Analysis -> Vuln Scanning -> Verification -> Chaining -> Reporting.
+Combines all capabilities from reNgine and reconftw into one pipeline.'''
+    )
+    fullrecon_parser.add_argument('-t', '--target', action='append', dest='targets',
+                                 help='Target domain (can specify multiple with -t d1 -t d2)')
+    fullrecon_parser.add_argument('-c', '--config', default='configs/full_recon.yaml',
+                                 help='Config file (default: configs/full_recon.yaml)')
+    fullrecon_parser.add_argument('-o', '--output', default=None,
+                                 help='Output directory (overrides config)')
+    fullrecon_parser.add_argument('--skip-osint', action='store_true',
+                                 help='Skip OSINT phase')
+    fullrecon_parser.add_argument('--skip-dns', action='store_true',
+                                 help='Skip DNS enumeration phase')
+    fullrecon_parser.add_argument('--skip-web', action='store_true',
+                                 help='Skip web analysis phase')
+    fullrecon_parser.add_argument('--skip-vulns', action='store_true',
+                                 help='Skip vulnerability scanning phase')
+    fullrecon_parser.add_argument('--resume', action='store_true',
+                                 help='Resume from previous scan progress')
+    fullrecon_parser.add_argument('--no-confirm', action='store_true',
+                                 help='Skip confirmation prompt')
+
     # === INTELLIGENT MODE ===
     intelligent_parser = subparsers.add_parser(
         'intelligent',
@@ -135,6 +165,49 @@ For more help: python scanner.py <mode> --help
                                 help='Tools to use (default: all)')
     
     return parser
+
+
+def run_fullrecon_mode(args):
+    """Run full reconnaissance pipeline (reNgine + reconftw)"""
+    safe_print("\n[*] Starting Full Reconnaissance Scanner...")
+    safe_print("    reNgine + reconftw combined pipeline\n")
+
+    import yaml
+    from scanners.full_recon import FullReconScanner, FullReconConfig
+
+    config = FullReconConfig(
+        targets=args.targets or [],
+        config_file=Path(args.config) if args.config else None,
+    )
+    config.load()
+
+    # CLI overrides
+    if args.output:
+        config.output_dir = Path(args.output)
+    if args.targets:
+        config.targets = args.targets
+
+    # Phase skip flags
+    if args.skip_osint:
+        config.config.setdefault("osint", {})["enabled"] = False
+    if args.skip_dns:
+        config.config.setdefault("subdomains", {})["enabled"] = False
+    if args.skip_web:
+        config.config.setdefault("web_analysis", {})["enabled"] = False
+    if args.skip_vulns:
+        config.config.setdefault("vulnerability_scan", {})["enabled"] = False
+    if args.no_confirm:
+        config.config.setdefault("safety", {})["confirm_before_run"] = False
+
+    if not config.targets:
+        safe_print("[!] No targets specified.")
+        safe_print("    Use -t domain1 -t domain2 OR define targets in config file")
+        sys.exit(1)
+
+    scanner = FullReconScanner(config)
+    scanner.run()
+
+    safe_print("\n[+] Full reconnaissance complete!")
 
 
 def run_intelligent_mode(args):
@@ -282,7 +355,9 @@ def main():
         
     # Route to appropriate mode
     try:
-        if args.mode == 'intelligent':
+        if args.mode == 'fullrecon':
+            run_fullrecon_mode(args)
+        elif args.mode == 'intelligent':
             run_intelligent_mode(args)
         elif args.mode == 'continuous':
             run_continuous_mode(args)
