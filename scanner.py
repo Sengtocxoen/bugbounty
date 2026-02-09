@@ -148,7 +148,7 @@ def confirm_scan(config: dict) -> bool:
 # =============================================================================
 
 
-def run_deep_mode(config: dict, targets: list):
+def run_deep_mode(config: dict, targets: list, config_path: Path = None):
     """Run deep comprehensive scan."""
     from scanners.deep_scan import DeepScanner, DeepScanConfig
 
@@ -191,15 +191,15 @@ def run_deep_mode(config: dict, targets: list):
         custom_wordlist=Path(phases.get('subdomain_discovery', {}).get('custom_wordlist')) if phases.get('subdomain_discovery', {}).get('custom_wordlist') else None,
         # Output
         verbose=output_cfg.get('verbose', True),
-        save_json=output_cfg.get('save_json', True),
+        save_json=output_cfg.get('verbose', True),
         save_txt=output_cfg.get('save_txt', True),
         # Network overrides
         custom_headers=program_cfg.get('custom_headers', {}),
         custom_rate_limit=float(network.get('rate_limit', 0)),
         custom_request_delay=float(network.get('request_delay', 0)),
         custom_timeout=0,  # No timeouts
-        # Pass full config for nuclei and advanced features
-        config_file=None,
+        # Pass config file path for Nuclei and advanced features
+        config_file=config_path,
     )
 
     # Store the full config dict on the scan_config so scanners can access it
@@ -453,6 +453,7 @@ def run_parallel_mode(config: dict, targets: list):
 # MODE DISPATCH
 # =============================================================================
 
+# MODE_RUNNERS: map scan_mode to runner function
 MODE_RUNNERS = {
     'deep': run_deep_mode,
     'fullrecon': run_fullrecon_mode,
@@ -465,17 +466,21 @@ MODE_RUNNERS = {
 
 
 def main():
-    """Main entry point - config-driven scanner."""
+    """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description='Bug Bounty Scanner - Config-driven unified CLI',
+        description='Bug Bounty Scanner - Config-Driven Security Testing',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
-Everything is controlled via scan_config.yaml.
+Examples:
+  python scanner.py                      # Uses ./scan_config.yaml
+  python scanner.py -c amazon_config.yaml
+  python scanner.py -c /path/to/custom_config.yaml
 
-Quick start:
-  1. cp scan_config.yaml.test scan_config.yaml
-  2. Edit scan_config.yaml (set targets, scan_mode, etc.)
-  3. python scanner.py
+Config file controls everything:
+  - scan_mode: deep, fullrecon, intelligent, or continuous
+  - targets: domains to scan
+  - phases: what to scan for
+  - network: rate limits, headers, etc.
 
 Override config path:
   python scanner.py -c /path/to/my_config.yaml
@@ -520,7 +525,11 @@ Override config path:
     # Run the selected scan mode
     try:
         runner = MODE_RUNNERS[mode]
-        runner(config, targets)
+        # Pass config_path to deep mode for Nuclei and advanced features
+        if mode == 'deep':
+            runner(config, targets, config_path)
+        else:
+            runner(config, targets)
     except KeyboardInterrupt:
         safe_print("\n\n[!] Scan interrupted by user")
         sys.exit(0)
