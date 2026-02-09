@@ -4,5 +4,5 @@ __pycache__/
 Feature.md
 books/
 scan_config_maximum.yaml
-scan_config.yaml
 deep_scan_results/
+scan_config.yaml

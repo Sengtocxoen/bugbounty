@@ -52,19 +52,18 @@ import yaml  # Added yaml support
 # Add tools directory to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Import all scanner modules
-from utils.config import get_amazon_config, get_shopify_config, get_anduril_config, AmazonConfig, ShopifyConfig, AndurilConfig
-from utils.scope_validator import AmazonScopeValidator, ShopifyScopeValidator
+# Import generic scanner modules (config-driven, no program-specific code)
+from utils.config import AmazonConfig, ShopifyConfig, AndurilConfig
 from discovery.enhanced_subdomain_scanner import (
-    EnhancedSubdomainScanner, AmazonEnhancedScanner, ShopifyEnhancedScanner,
+    EnhancedSubdomainScanner,
     ScanResult as SubdomainScanResult, SubdomainInfo, EXTENDED_WORDLIST, COMMON_PORTS
 )
 from discovery.endpoint_discovery import (
-    EndpointDiscovery, AmazonEndpointDiscovery, ShopifyEndpointDiscovery,
+    EndpointDiscovery,
     EndpointResult, COMMON_PATHS
 )
-from analysis.tech_detection import TechDetector, AmazonTechDetector, ShopifyTechDetector
-from analysis.js_analyzer import JSAnalyzer, AmazonJSAnalyzer, ShopifyJSAnalyzer
+from analysis.tech_detection import TechDetector
+from analysis.js_analyzer import JSAnalyzer
 from analysis.param_fuzzer import ParamFuzzer, FUZZ_PAYLOADS
 from discovery.cloud_enum import CloudEnumerator, CloudEnumResult
 from techniques.waf_evasion import WAFEvader, WAFInfo
@@ -271,72 +270,36 @@ class DeepScanner:
         self.config = config
         self.results: Dict[str, DeepScanResult] = {}
 
-        # Initialize scanners based on program
-        if config.program == "amazon":
-            self.program_config = get_amazon_config(config.username)
-            self.subdomain_scanner = AmazonEnhancedScanner(self.program_config)
-            self.endpoint_discovery = AmazonEndpointDiscovery(config.username)
-            self.tech_detector = AmazonTechDetector(config.username)
-            self.js_analyzer = AmazonJSAnalyzer(config.username)
-            self.param_fuzzer = ParamFuzzer()  # Generic fuzzer - program-specific doesn't exist
-            self.cloud_enumerator = CloudEnumerator()
-            self.waf_evader = WAFEvader()
-            self.scope_validator = AmazonScopeValidator(self.program_config)
-        elif config.program == "shopify":
-            self.program_config = get_shopify_config(config.username)
-            self.subdomain_scanner = ShopifyEnhancedScanner(self.program_config)
-            self.endpoint_discovery = ShopifyEndpointDiscovery(config.username)
-            self.tech_detector = ShopifyTechDetector(config.username)
-            self.js_analyzer = ShopifyJSAnalyzer(config.username)
-            self.param_fuzzer = ParamFuzzer()  # Generic fuzzer - program-specific doesn't exist
-            self.cloud_enumerator = CloudEnumerator()
-            self.waf_evader = WAFEvader()
-            self.scope_validator = ShopifyScopeValidator(self.program_config)
-        elif config.program == "anduril":
-            # Anduril Industries - use generic scanners with Anduril config
-            self.program_config = get_anduril_config(config.username)
-            self.subdomain_scanner = EnhancedSubdomainScanner()
-            self.endpoint_discovery = EndpointDiscovery()
-            self.tech_detector = TechDetector()
-            self.js_analyzer = JSAnalyzer()
-            self.param_fuzzer = ParamFuzzer()
-            self.cloud_enumerator = CloudEnumerator()
-            self.waf_evader = WAFEvader()
-            self.scope_validator = None  # No custom scope validator yet
-        else:
-            self.program_config = None
-            self.subdomain_scanner = EnhancedSubdomainScanner()
-            self.endpoint_discovery = EndpointDiscovery()
-            self.tech_detector = TechDetector()
-            self.js_analyzer = JSAnalyzer()
-            self.param_fuzzer = ParamFuzzer()
-            self.cloud_enumerator = CloudEnumerator()
-            self.waf_evader = WAFEvader()
-            self.scope_validator = None
-
-        # Apply Configuration Overrides
-        if self.program_config:
-            if config.custom_rate_limit > 0:
-                self.program_config.rate_limit = config.custom_rate_limit
-            if config.custom_request_delay > 0:
-                self.program_config.request_delay = config.custom_request_delay
-            if config.custom_timeout > 0:
-                self.program_config.request_timeout = config.custom_timeout
-            
-            # Apply headers - simple monkeypatch if supported, or via os.environ for some tools
-            # Ideally, ProgramConfig should support custom_headers property.
-            # For Anduril it does. For Amazon/Shopify it might not have the field.
-            # We can use our os.environ hack from config_scanner as a fallback, 
-            # BUT we should also try to set it on the config object if possible.
-            if config.custom_headers:
-                # Add to program config if it supports it
-                if hasattr(self.program_config, 'custom_headers') and isinstance(self.program_config.custom_headers, dict):
-                     self.program_config.custom_headers.update(config.custom_headers)
-                
-                # Also set in environment for tools that check it
-                import os
-                for k, v in config.custom_headers.items():
-                    os.environ[f"SCANNER_HEADER_{k}"] = str(v)
+        # Initialize generic scanners (no program-specific logic)
+        # All configuration now comes from the config file
+        self.subdomain_scanner = EnhancedSubdomainScanner()
+        self.endpoint_discovery = EndpointDiscovery()
+        self.tech_detector = TechDetector()
+        self.js_analyzer = JSAnalyzer()
+        self.param_fuzzer = ParamFuzzer()
+        self.cloud_enumerator = CloudEnumerator()
+        self.waf_evader = WAFEvader()
+        self.scope_validator = None  # Scope validation handled via config
+        
+        # Program-specific config loaded from YAML file, NOT hardcoded
+        # Rate limits, headers, timeouts all come from config file
+        self.program_config = None
+        if config.custom_rate_limit > 0 or config.custom_headers or config.custom_timeout > 0:
+            # Create a simple config object from YAML values
+            from types import SimpleNamespace
+            self.program_config = SimpleNamespace(
+                rate_limit=config.custom_rate_limit if config.custom_rate_limit > 0 else 5,
+                request_delay=config.custom_request_delay if config.custom_request_delay > 0 else 0.2,
+                request_timeout=config.custom_timeout if config.custom_timeout > 0 else 30,
+                custom_headers=config.custom_headers,
+                user_agent=config.custom_headers.get('User-Agent', 'Mozilla/5.0 (BugBountyScanner)')
+            )
+        
+        # Apply custom headers via environment (for tools that check it)
+        if config.custom_headers:
+            import os
+            for k, v in config.custom_headers.items():
+                os.environ[f"SCANNER_HEADER_{k}"] = str(v)
 
         # Create output directory
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
