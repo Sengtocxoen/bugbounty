@@ -120,7 +120,7 @@ def print_config_summary(config: dict, targets: list):
         general = config.get('general', {})
         performance = config.get('performance', {})
         mode = config.get('scan_mode', 'fullrecon')
-        program = general.get('program')
+        program = general.get('program')  # Can be string or None
         username = general.get('h1_username', 'N/A')
         rate_limit = performance.get('rate_limit', 10)
         output_dir = general.get('output_dir', 'results')
@@ -128,8 +128,19 @@ def print_config_summary(config: dict, targets: list):
     else:
         # Old scanner.py format
         mode = config.get('scan_mode', 'deep')
-        program = config.get('program', {}).get('name')
-        username = config.get('program', {}).get('h1_username', 'N/A')
+        
+        # Handle program as either string or dict
+        program_cfg = config.get('program', {})
+        if isinstance(program_cfg, str):
+            program = program_cfg
+            username = config.get('h1_username', 'N/A')
+        elif isinstance(program_cfg, dict):
+            program = program_cfg.get('name')
+            username = program_cfg.get('h1_username', 'N/A')
+        else:
+            program = None
+            username = 'N/A'
+        
         rate_limit = config.get('network', {}).get('rate_limit', 10)
         output_dir = config.get('output', {}).get('directory', 'results')
         workers = config.get('workers', {}).get('max_workers', 10)
@@ -181,18 +192,51 @@ def run_deep_mode(config: dict, targets: list, config_path: Path = None):
     """Run deep comprehensive scan."""
     from scanners.deep_scan import DeepScanner, DeepScanConfig
 
-    phases = config.get('phases', {})
-    limits = config.get('limits', {})
-    network = config.get('network', {})
-    program_cfg = config.get('program', {})
-    output_cfg = config.get('output', {})
-    advanced = config.get('advanced', {})
+    # Detect config format and extract settings
+    if 'general' in config:
+        # full_recon.yaml format
+        general = config.get('general', {})
+        performance = config.get('performance', {})
+        phases = config.get('phases', {})
+        limits = config.get('limits', {})
+        
+        program = general.get('program')
+        username = general.get('h1_username', 'yourh1username')
+        custom_headers = general.get('custom_headers', {})
+        output_dir = Path(general.get('output_dir', 'results')) / 'deep'
+        rate_limit = performance.get('rate_limit', 0)
+        request_delay = performance.get('request_delay', 0)
+    else:
+        # Old scanner.py format
+        phases = config.get('phases', {})
+        limits = config.get('limits', {})
+        network = config.get('network', {})
+        output_cfg = config.get('output', {})
+        
+        # Handle program as string or dict
+        program_cfg = config.get('program', {})
+        if isinstance(program_cfg, str):
+            program = program_cfg
+            username = config.get('h1_username', 'yourh1username')
+            custom_headers = config.get('custom_headers', {})
+        elif isinstance(program_cfg, dict):
+            program = program_cfg.get('name')
+            username = program_cfg.get('h1_username', 'yourh1username')
+            custom_headers = program_cfg.get('custom_headers', {})
+        else:
+            program = None
+            username = 'yourh1username'
+            custom_headers = {}
+        
+        output_dir = Path(output_cfg.get('directory', 'results')) / 'deep'
+        rate_limit = network.get('rate_limit', 0)
+        request_delay = network.get('request_delay', 0)
 
     scan_config = DeepScanConfig(
         targets=targets,
-        program=program_cfg.get('name'),
-        username=program_cfg.get('h1_username', 'yourh1username'),
-        output_dir=Path(output_cfg.get('directory', 'results')) / 'deep',
+        program=program,
+        username=username,
+        output_dir=output_dir,
         # Phase control from config
         skip_subdomains=not phases.get('subdomain_discovery', {}).get('enabled', True),
         skip_ports=not phases.get('port_scanning', {}).get('enabled', True),
@@ -219,13 +263,13 @@ def run_deep_mode(config: dict, targets: list, config_path: Path = None):
         extended_wordlist=phases.get('subdomain_discovery', {}).get('use_extended_wordlist', True),
         custom_wordlist=Path(phases.get('subdomain_discovery', {}).get('custom_wordlist')) if phases.get('subdomain_discovery', {}).get('custom_wordlist') else None,
         # Output
-        verbose=output_cfg.get('verbose', True),
-        save_json=output_cfg.get('verbose', True),
-        save_txt=output_cfg.get('save_txt', True),
+        verbose=config.get('output', {}).get('verbose', True) if 'output' in config else True,
+        save_json=config.get('output', {}).get('save_json', True) if 'output' in config else True,
+        save_txt=config.get('output', {}).get('save_txt', True) if 'output' in config else True,
         # Network overrides
-        custom_headers=program_cfg.get('custom_headers', {}),
-        custom_rate_limit=float(network.get('rate_limit', 0)),
-        custom_request_delay=float(network.get('request_delay', 0)),
+        custom_headers=custom_headers,
+        custom_rate_limit=float(rate_limit),
+        custom_request_delay=float(request_delay),
         custom_timeout=0,  # No timeouts
         # Pass config file path for Nuclei and advanced features
         config_file=config_path,
