@@ -62,25 +62,41 @@ def load_config(config_path: Path) -> dict:
 
 
 def resolve_targets(config: dict) -> list:
-    """Resolve target list from config (domains list or targets file)."""
-    targets_cfg = config.get('targets', {})
+    """Resolve target list from config (supports multiple formats)."""
     targets = []
-
-    # From domains list
-    domains = targets_cfg.get('domains', [])
-    if domains:
-        targets.extend(domains)
-
-    # From targets file
-    targets_file = targets_cfg.get('targets_file')
-    if targets_file:
-        p = Path(targets_file)
-        if p.exists():
-            with open(p) as f:
-                targets.extend([line.strip() for line in f if line.strip()])
-        else:
-            safe_print(f"[!] Targets file not found: {targets_file}")
-
+    
+    # Format 1: full_recon.yaml style - general.targets as list
+    if 'general' in config:
+        general = config['general']
+        general_targets = general.get('targets', [])
+        if isinstance(general_targets, list):
+            targets.extend(general_targets)
+    
+    # Format 2: old scanner.py style - targets.domains as list
+    elif 'targets' in config:
+        targets_cfg = config['targets']
+        
+        # Handle if targets is a dict with 'domains' key
+        if isinstance(targets_cfg, dict):
+            # From domains list
+            domains = targets_cfg.get('domains', [])
+            if domains:
+                targets.extend(domains)
+            
+            # From targets file
+            targets_file = targets_cfg.get('targets_file')
+            if targets_file:
+                p = Path(targets_file)
+                if p.exists():
+                    with open(p) as f:
+                        targets.extend([line.strip() for line in f if line.strip()])
+                else:
+                    safe_print(f"[!] Targets file not found: {targets_file}")
+        
+        # Handle if targets is directly a list
+        elif isinstance(targets_cfg, list):
+            targets.extend(targets_cfg)
+    
     return targets
 
 
@@ -98,12 +114,25 @@ def resolve_subdomains(config: dict) -> list:
 
 def print_config_summary(config: dict, targets: list):
     """Print a summary of the scan configuration."""
-    mode = config.get('scan_mode', 'deep')
-    program = config.get('program', {}).get('name')
-    username = config.get('program', {}).get('h1_username', 'N/A')
-    rate_limit = config.get('network', {}).get('rate_limit', 10)
-    output_dir = config.get('output', {}).get('directory', 'results')
-    workers = config.get('workers', {}).get('max_workers', 10)
+    # Handle both old and new config formats
+    if 'general' in config:
+        # full_recon.yaml format
+        general = config.get('general', {})
+        performance = config.get('performance', {})
+        mode = config.get('scan_mode', 'fullrecon')
+        program = general.get('program')
+        username = general.get('h1_username', 'N/A')
+        rate_limit = performance.get('rate_limit', 10)
+        output_dir = general.get('output_dir', 'results')
+        workers = performance.get('max_workers', 10)
+    else:
+        # Old scanner.py format
+        mode = config.get('scan_mode', 'deep')
+        program = config.get('program', {}).get('name')
+        username = config.get('program', {}).get('h1_username', 'N/A')
+        rate_limit = config.get('network', {}).get('rate_limit', 10)
+        output_dir = config.get('output', {}).get('directory', 'results')
+        workers = config.get('workers', {}).get('max_workers', 10)
 
     print(f"\n{'='*70}")
     print(f"  BUG BOUNTY SCANNER")
