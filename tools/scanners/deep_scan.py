@@ -55,7 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # Import generic scanner modules (config-driven, no program-specific code)
 from utils.config import AmazonConfig, ShopifyConfig, AndurilConfig
 from discovery.enhanced_subdomain_scanner import (
-    EnhancedSubdomainScanner,
+    EnhancedSubdomainScanner, AmazonEnhancedScanner, ShopifyEnhancedScanner,
     ScanResult as SubdomainScanResult, SubdomainInfo, EXTENDED_WORDLIST, COMMON_PORTS
 )
 from discovery.endpoint_discovery import (
@@ -270,9 +270,13 @@ class DeepScanner:
         self.config = config
         self.results: Dict[str, DeepScanResult] = {}
 
-        # Initialize generic scanners (no program-specific logic)
-        # All configuration now comes from the config file
-        self.subdomain_scanner = EnhancedSubdomainScanner()
+        # Initialize subdomain scanner (program-specific subclass if applicable)
+        if config.program == "amazon":
+            self.subdomain_scanner = AmazonEnhancedScanner()
+        elif config.program == "shopify":
+            self.subdomain_scanner = ShopifyEnhancedScanner()
+        else:
+            self.subdomain_scanner = EnhancedSubdomainScanner()
         self.endpoint_discovery = EndpointDiscovery()
         self.tech_detector = TechDetector()
         self.js_analyzer = JSAnalyzer()
