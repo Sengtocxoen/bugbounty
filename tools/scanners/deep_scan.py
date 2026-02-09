@@ -68,6 +68,7 @@ from analysis.js_analyzer import JSAnalyzer, AmazonJSAnalyzer, ShopifyJSAnalyzer
 from analysis.param_fuzzer import ParamFuzzer, FUZZ_PAYLOADS
 from discovery.cloud_enum import CloudEnumerator, CloudEnumResult
 from techniques.waf_evasion import WAFEvader, WAFInfo
+from verification.nuclei_scanner import NucleiScanner
 
 
 # Global flag for graceful shutdown
@@ -235,6 +236,9 @@ class DeepScanResult:
 
     # WAF Detection
     waf_info: Dict[str, Any] = field(default_factory=dict)
+
+    # Nuclei Scan Results
+    nuclei_scan: Dict[str, Any] = field(default_factory=dict)
 
     # Vulnerability findings
     vulnerabilities: List[Dict] = field(default_factory=list)
@@ -862,6 +866,117 @@ class DeepScanner:
         result.phases_completed.append("param_fuzzing")
         self.log(f"Parameter fuzzing complete: {len(result.vulnerabilities)} vulnerabilities found", "SUCCESS")
 
+    # ======================== PHASE 9: NUCLEI VULNERABILITY SCANNING ========================
+
+    def phase_nuclei_scan(self, target: str, result: DeepScanResult):
+        """
+        Phase 9: Nuclei vulnerability scanning (NEW!)
+        Automatically scan discovered targets with Nuclei templates
+        """
+        # Check if Nuclei is enabled in config
+        nuclei_config = None
+        if self.config.config_file and self.config.config_file.exists():
+            try:
+                import yaml
+                with open(self.config.config_file) as f:
+                    full_config = yaml.safe_load(f)
+                    nuclei_config = full_config.get('nuclei_scan', {})
+            except Exception as e:
+                self.log(f"Could not load Nuclei config: {e}", "WARNING")
+        
+        # Check if enabled
+        if nuclei_config and not nuclei_config.get('enabled', False):
+            self.log("Nuclei scanning disabled in config", "WARNING")
+            return
+        
+        self.phase_header(9, "NUCLEI VULNERABILITY SCANNING", target)
+        
+        try:
+            # Initialize Nuclei scanner
+            output_dir = self.config.output_dir.parent / "nuclei_results"
+            nuclei_scanner = NucleiScanner(config=nuclei_config, output_dir=output_dir)
+            
+            # First, save current results to JSON so we can extract targets
+            safe_target = target.replace("://", "_").replace("/", "_").replace(":", "_")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            target_dir = self.config.output_dir / safe_target
+            target_dir.mkdir(parents=True, exist_ok=True)
+            temp_json = target_dir / f"temp_scan_for_nuclei_{timestamp}.json"
+            
+            # Write temp results for target extraction
+            with open(temp_json, 'w') as f:
+                data = {
+                    "subdomains": result.subdomains,
+                    "endpoints": result.endpoints,
+                    "api_endpoints": result.api_endpoints,
+                    "cloud_buckets": result.cloud_buckets,
+                    "open_ports": result.open_ports
+                }
+                json.dump(data, f)
+            
+            # Extract targets from scan results
+            targets_to_scan = nuclei_scanner.load_targets_from_scan_results(temp_json)
+            
+            # Cleanup temp file
+            temp_json.unlink(missing_ok=True)
+            
+            if not targets_to_scan:
+                self.log("No targets found for Nuclei scan", "WARNING")
+                return
+            
+            self.log(f"Running Nuclei on {len(targets_to_scan)} discovered targets...")
+            
+            # Run Nuclei scan
+            nuclei_results = nuclei_scanner.scan_targets(targets_to_scan, safe_target)
+            
+            # Store results
+            result.nuclei_scan = {
+                "enabled": True,
+                "scan_start": nuclei_results.get("summary", {}).get("scan_start"),
+                "scan_end": nuclei_results.get("summary", {}).get("scan_end"),
+                "targets_scanned": len(targets_to_scan),
+                "vulnerabilities_found": len(nuclei_results.get("findings", [])),
+                "by_severity": nuclei_results.get("summary", {}).get("by_severity", {}),
+                "findings": nuclei_results.get("findings", []),
+                "output_files": nuclei_results.get("output_files", {})
+            }
+            
+            # Add Nuclei findings to vulnerabilities list
+            for finding in nuclei_results.get("findings", []):
+                result.vulnerabilities.append({
+                    "vuln_type": "nuclei_finding",
+                    "vuln_name": finding.get("name"),
+                    "severity": finding.get("severity"),
+                    "target": finding.get("matched_at"),
+                    "template_id": finding.get("template_id"),
+                    "description": finding.get("description"),
+                    "remediation": finding.get("remediation"),
+                    "reference": finding.get("reference", []),
+                    "cwe": ", ".join(finding.get("classification", {}).get("cwe-id", [])),
+                    "cvss": finding.get("classification", {}).get("cvss-score"),
+                    "tags": finding.get(" tags", []),
+                    "tool": "nuclei"
+                })
+            
+            result.phases_completed.append("nuclei_scan")
+            
+            summary = nuclei_results.get("summary", {})
+            by_severity = summary.get("by_severity", {})
+            self.log(f"Nuclei scan complete!", "SUCCESS")
+            self.log(f"  Critical: {by_severity.get('critical', 0)}, "
+                    f"High: {by_severity.get('high', 0)}, "
+                    f"Medium: {by_severity.get('medium', 0)}")
+            
+        except ImportError:
+            self.log("Nuclei scanner module not found. Skipping Nuclei scan.", "WARNING")
+        except RuntimeError as e:
+            self.log(f"Nuclei not installed: {e}", "WARNING")
+            self.log("Install with: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest")
+        except Exception as e:
+            result.errors.append(f"Nuclei scan error: {str(e)}")
+            self.log(f"Nuclei scan error: {e}", "ERROR")
+            traceback.print_exc()
+
     # ======================== MAIN SCAN ORCHESTRATOR ========================
 
     def scan_target(self, target: str) -> DeepScanResult:
@@ -920,6 +1035,13 @@ class DeepScanner:
 
             # Phase 8: Parameter Fuzzing
             self.phase_param_fuzzing(alive_targets, result)
+
+            if self.check_shutdown():
+                result.scan_end = datetime.utcnow().isoformat()
+                return result
+
+            # Phase 9: Nuclei Vulnerability Scanning (NEW)
+            self.phase_nuclei_scan(target, result)
 
         except Exception as e:
             result.errors.append(f"Fatal error: {str(e)}")
@@ -1032,6 +1154,7 @@ class DeepScanner:
                     "dom_sinks": result.dom_sinks,
                     "vulnerabilities": result.vulnerabilities,
                     "potential_issues": result.potential_issues,
+                    "nuclei_scan": result.nuclei_scan,
                     "errors": result.errors,
                 }
                 json.dump(data, f, indent=2, default=str)

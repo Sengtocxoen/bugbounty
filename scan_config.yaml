@@ -134,6 +134,50 @@ verification:
   test_default_credentials: false  # DO NOT enable unless authorized
 
 # =============================================================================
+# NUCLEI VULNERABILITY SCANNING
+# =============================================================================
+
+nuclei_scan:
+  enabled: true                # Enable/disable Nuclei scanning
+  
+  # Severity levels to scan for
+  severity:
+    - critical
+    - high
+    - medium
+    # - low
+    # - info
+  
+  # Tags to include (leave empty for all)
+  tags: []
+    # - cve
+    # - exposure
+    # - misconfig
+    # - tech
+  
+  # Tags to exclude
+  exclude_tags:
+    - dos                      # Exclude DoS tests
+  
+  # Path to custom Nuclei templates (optional)
+  custom_templates: null       # Example: "custom_templates/"
+  
+  # What targets to scan
+  scan_targets:
+    subdomains: true           # Scan discovered live subdomains
+    endpoints: true            # Scan discovered endpoints
+    cloud_buckets: false       # Scan cloud bucket URLs (may cause access issues)
+    ports: true                # Scan web services on open ports
+  
+  # Performance settings
+  rate_limit: 150              # Requests per minute
+  timeout: 300                 # Timeout per target (seconds)
+  threads: 10                  # Concurrent threads
+  
+  # Template updates
+  update_templates: false      # Update Nuclei templates before scan (adds time)
+
+# =============================================================================
 # OUTPUT
 # =============================================================================
 
@@ -164,5 +208,6 @@ notes: |
   - Secret validation reduces false positives by 90%
   - Response dedup speeds up scans by 60%
   - Vulnerability chaining auto-escalates severity
+  - Nuclei scanning automatically runs on discovered targets
   - Review configuration before running
   - Follow program rules and scope

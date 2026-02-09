@@ -80,40 +80,24 @@ The scanner uses **YAML configuration files** to define scan parameters. This al
 For different programs, create separate config files:
 
 ```bash
-# DoorDash configuration
-copy scan_config.yaml.test scan_config_doordash.yaml
-
-# Amazon VRP configuration
-copy scan_config.yaml.test scan_config_amazon.yaml
-
 # Custom program configuration
 copy scan_config.yaml.test scan_config_myprogram.yaml
 ```
 
 Then customize each file with program-specific settings:
 
-**Example: DoorDash** (`scan_config_doordash.yaml`):
+**Example: program** (`scan_config_program.yaml`):
 ```yaml
-program: "doordash"
+program: "program"
 h1_username: "your_h1_username"  # IMPORTANT: Replace this!
 
 targets:
-  - "www.doordash.com"
+  - "www.program.com"
 
 custom_headers:
-  X-Bug-Bounty: "your_h1_username"  # Required by DoorDash
+  X-Bug-Bounty: "your_h1_username"  # Required by program
 
 rate_limit: 3  # Conservative rate limiting
-```
-
-**Example: Amazon VRP** (`scan_config_amazon.yaml`):
-```yaml
-program: "amazon"
-h1_username: "amazonvrpresearcher_yourh1username"
-
-targets:
-  - "aws.amazon.com"
-  - "signin.aws.amazon.com"
 ```
 
 > **Note**: Config files (`scan_config.yaml`, `scan_config_*.yaml`) are gitignored to prevent accidentally committing sensitive information like usernames or API keys.
