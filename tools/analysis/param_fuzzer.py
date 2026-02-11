@@ -9,17 +9,22 @@ Tests URL parameters for common vulnerabilities:
 - Open Redirects
 - Command Injection indicators
 
-Uses safe, non-destructive payloads to detect reflection and error responses.
-Includes false positive detection, template deduplication, and context-aware fuzzing.
+Enhanced with:
+- False positive detection
+- WAF evasion techniques
+- Smart deduplication
+- Response-based validation
+- Intelligent parameter filtering
+- Time-based attack detection
 """
 
 import re
-import json
-import time
-import threading
 import hashlib
+import time
+from typing import Tuple
+import threading
 from dataclasses import dataclass, field
-from typing import List, Set, Dict, Optional, Tuple, Callable
+from typing import List, Set, Dict, Optional, Callable
 from urllib.parse import urlparse, urljoin, parse_qs, urlencode, urlunparse
 from datetime import datetime
 
@@ -627,15 +632,43 @@ def _detect_ssrf(resp: requests.Response) -> bool:
 
 
 def _validate_ssrf(resp: requests.Response, payload: str) -> Tuple[bool, str]:
-    """Validate SSRF response is from internal service"""
+    """Validate SSRF response is from internal service with strict pattern matching"""
     content = resp.text
+    
+    # Check for AWS metadata with STRICT patterns - require actual credential format
     if '169.254.169.254' in payload:
-        if re.search(r'ami-id|instance-type|local-ipv4|iam/', content):
-            return True, "AWS metadata access confirmed"
+        aws_patterns = [
+            r'"AccessKeyId"\s*:\s*"ASIA[A-Z0-9]{16}"',  # Real AWS key format
+            r'"SecretAccessKey"\s*:\s*"[A-Za-z0-9/+=]{40}"',
+            r'"Token"\s*:\s*"[A-Za-z0-9/+=]{100,}"',  # Session token
+            r'ami-[a-f0-9]{8,17}',  # Real AMI ID format
+            r'"instance-id"\s*:\s*"i-[a-f0-9]{8,17}"',  # Real instance ID
+            r'"local-ipv4"\s*:\s*"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"',  # IP format
+        ]
+        for pattern in aws_patterns:
+            if re.search(pattern, content):
+                return True, "AWS metadata with actual credentials/data confirmed"
+        
+        # Check if we just see keywords without structure (likely false positive)
+        if re.search(r'ami-id|instance-type|local-ipv4', content):
+            return False, "AWS keywords found but no actual metadata structure"
+    
+    # Check for GCP metadata with STRICT patterns
     if 'metadata.google.internal' in payload:
-        if re.search(r'computeMetadata|project-id|instance/zone', content):
-            return True, "GCP metadata access confirmed"
-    return False, "No confirmed metadata access"
+        gcp_patterns = [
+            r'"access_token"\s*:\s*"ya29\.[A-Za-z0-9_-]+"',  # Real GCP token
+            r'"project-id"\s*:\s*"[a-z0-9-]{6,30}"',  # Real project ID format
+            r'"numeric_project_id"\s*:\s*\d{10,}',  # Numeric project ID
+            r'"instance/zone"\s*:\s*"projects/\d+/zones/',  # Zone format
+        ]
+        for pattern in gcp_patterns:
+            if re.search(pattern, content):
+                return True, "GCP metadata with actual token/data confirmed"
+        
+        if re.search(r'computeMetadata|project-id', content):
+            return False, "GCP keywords found but no actual metadata structure"
+    
+    return False, "No confirmed internal service access"
 
 
 def _detect_path_traversal(resp: requests.Response) -> bool:
@@ -691,14 +724,56 @@ def _detect_cmdi(resp: requests.Response, canary: str) -> bool:
     return any(re.search(pattern, content) for pattern in error_patterns)
 
 
-def _validate_cmdi(resp: requests.Response, payload: str, canary: str) -> Tuple[bool, str]:
-    """Validate command injection evidence"""
+def _validate_cmdi(resp: requests.Response, payload: str, canary: str, response_time: float = None) -> Tuple[bool, str]:
+    """Validate command injection with multiple techniques (output + time-based)"""
     content = resp.text
+    
+    # Method 1: Direct output reflection (echo commands)
     if f"cmd_test_{canary}" in content:
-        return True, "Command output reflected"
-    shell_errors = [r'sh:\s*\d*:.*not found', r'bash:.*command not found', r'/bin/.*:.*not found']
-    if any(re.search(pattern, content.lower()) for pattern in shell_errors):
-        return True, "Shell error indicates command parsing"
+        # Verify it's actual command output, not just reflection in error message
+        # Command output should be in plain text, not in quotes or HTML-encoded
+        if re.search(rf'cmd_test_{canary}(?!["\'])', content):
+            # Check it's not in an error message or log
+            context_start = max(0, content.find(f"cmd_test_{canary}") - 50)
+            context_end = min(len(content), content.find(f"cmd_test_{canary}") + 50)
+            context = content[context_start:context_end].lower()
+            
+            # If surrounded by error keywords, likely not execution
+            if not any(keyword in context for keyword in ['error', 'invalid', 'failed', 'exception']):
+                return True, "Command output confirmed (canary in clean context)"
+        
+        return False, "Canary reflected but likely in error message, not execution"
+    
+    # Method 2: Time-based detection (sleep/timeout commands)
+    if response_time and response_time >= 1.0:  # At least 1 second delay
+        # Extract expected sleep duration from payload
+        sleep_patterns = [
+            r'sleep\s+(\d+)',
+            r'timeout\s+(\d+)',
+            r'ping\s+-[nc]\s+(\d+)',
+        ]
+        
+        for pattern in sleep_patterns:
+            sleep_match = re.search(pattern, payload.lower())
+            if sleep_match:
+                expected_delay = int(sleep_match.group(1))
+                # Allow 20% tolerance for network variance
+                min_delay = expected_delay * 0.8
+                max_delay = expected_delay * 1.5
+                
+                if min_delay <= response_time <= max_delay:
+                    return True, f"Time-based confirmation ({response_time:.2f}s delay for {expected_delay}s sleep)"
+    
+    # Method 3: Shell error messages (actual command parsing)
+    shell_error_patterns = [
+        r'sh:\s*line\s*\d+:',  # bash line errors
+        r'/bin/(ba)?sh:.*not found',  # command not found
+        r'syntax error near unexpected token',  # shell syntax errors
+        r'command not found',  # generic shell error
+    ]
+    if any(re.search(pattern, content, re.IGNORECASE) for pattern in shell_error_patterns):
+        return True, "Shell error indicates command was parsed/attempted"
+    
     return False, "No confirmed command execution"
 
 
@@ -725,12 +800,60 @@ def _detect_ssti(resp: requests.Response) -> bool:
 
 
 def _validate_ssti(resp: requests.Response, payload: str) -> Tuple[bool, str]:
+    """Validate SSTI with strict context checking to avoid false positives"""
     content = resp.text
-    if 'java.lang.Runtime' in content: return True, "Java reflection"
-    if '49' in content:
-        # Avoid FPs where 49 is in the source anyway
-        if re.search(r'(?<![0-9])49(?![0-9])', content):
-            return True, "Math evaluation confirmed"
+    
+    # For math expression {{7*7}} or ${7*7} or similar
+    if any(expr in payload for expr in ['{{7*7}}', '${7*7}', '<%=7*7%>', '#{7*7}']):
+        # Must find exactly '49' as standalone number, not in other numbers
+        if re.search(r'(?<![0-9.])49(?![0-9.])', content):
+            # Context-aware validation: check the surrounding text
+            matches = list(re.finditer(r'(?<![0-9.])49(?![0-9.])', content))
+            valid_contexts = 0
+            
+            for match in matches:
+                start = max(0, match.start() - 100)
+                end = min(len(content), match.end() + 100)
+                context = content[start:end].lower()
+                
+                # Reject if '49' appears in these false positive contexts:
+                false_positive_patterns = [
+                    r'href=["\']?[^"\'>]*49',  # In URLs
+                    r'src=["\']?[^"\'>]*49',   # In image/script sources
+                    r'url\([^)]*49',            # In CSS urls
+                    r'id["\']?:["\']?[^"\',}]*49',  # In JSON IDs
+                    r'class=["\'][^"\'>]*49',   # In CSS classes
+                    r'data-[a-z-]+=["\'][^"\'>]*49',  # In data attributes
+                    r'\$[a-z0-9_]+\s*=\s*["\']?49',  # In variable assignments
+                    r'/[a-z0-9_/-]*49',         # In paths
+                    r'\?[^\s<]*49',             # In query strings
+                ]
+                
+                is_false_positive = any(re.search(pattern, context) for pattern in false_positive_patterns)
+                
+                if not is_false_positive:
+                    valid_contexts += 1
+            
+            if valid_contexts > 0:
+                return True, f"Math evaluation confirmed ({valid_contexts} valid context(s))"
+            else:
+                return False, "Found '49' but only in URLs/IDs/attributes (false positive)"
+        
+        return False, "No '49' found in response"
+    
+    # For Java reflection
+    if 'java.lang.Runtime' in content:
+        # Must appear in actual reflection context, not just as text
+        reflection_patterns = [
+            r'class\s+java\.lang\.Runtime',
+            r'object\s+java\.lang\.Runtime',
+            r'java\.lang\.Runtime@[a-f0-9]+',  # Object toString format
+            r'getClass\(\)\.getName\(\).*java\.lang\.Runtime',
+        ]
+        if any(re.search(pattern, content) for pattern in reflection_patterns):
+            return True, "Java reflection confirmed"
+        return False, "String 'java.lang.Runtime' found but not in execution context"
+    
     return False, "No SSTI confirmed"
 
 
@@ -742,6 +865,38 @@ def _validate_xxe(resp: requests.Response, canary: str) -> Tuple[bool, str]:
 
 class ParamFuzzer:
     """Fuzz URL parameters for vulnerabilities with false positive detection and optimization"""
+    
+    # Low-value parameters to skip during fuzzing (pagination, sorting, display controls)
+    LOW_VALUE_PARAMS = {
+        # Pagination/Sorting
+        'sort', 'order', 'orderby', 'sortby', 'dir', 'direction',
+        'page', 'p', 'pg', 'pagenum', 'pagenumber', 'paged',
+        'limit', 'count', 'perpage', 'pagesize', 'per_page',
+        'offset', 'start', 'begin', 'skip',
+        
+        # Display/Layout  
+        'view', 'display', 'layout', 'theme', 'style',
+        'lang', 'language', 'locale', 'l',
+        'format', 'output', 'type',
+        
+        # Tracking/Analytics (never useful for XSS/SQLi/etc)
+        'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+        'ref', 'referrer', 'source', 'from',
+        'fbclid', 'gclid', '_ga', '_gid', 'mc_eid',
+        
+        # Common identifiers (safe, just for lookup)
+        'tab', 'section', 'panel', 'filter',
+    }
+    
+    # High-value parameters (always test these even if they look like IDs)
+    HIGH_VALUE_PARAMS = {
+        'url', 'redirect', 'redir', 'dest', 'destination', 'next', 'return',
+        'callback', 'cb', 'jsonp', 'template', 'tpl',
+        'file', 'path', 'dir', 'folder', 'document', 'page',
+        'q', 'query', 'search', 'keyword', 's',
+        'cmd', 'command', 'exec', 'execute',
+        'data', 'input', 'value', 'content',
+    }
 
     def __init__(self, rate_limit: float = 5.0, user_agent: str = "BugBountyResearcher",
                  enable_fp_detection: bool = True):
@@ -769,13 +924,42 @@ class ParamFuzzer:
         self.baselines: Dict[str, requests.Response] = {}
         self.template_hashes: Set[str] = set()
 
-        # Statistics
+        # Statistics (enhanced with parameter filtering stats)
         self.stats = {
             'total_detections': 0,
             'false_positives_filtered': 0,
             'verified_findings': 0,
             'deduplicated_scans': 0,
+            'skipped_params': 0,  # NEW: track skipped low-value params
+            'params_tested': 0,   # NEW: track actually tested params
         }
+    
+    def should_fuzz_parameter(self, param_name: str, param_value: str) -> Tuple[bool, str]:
+        """
+        Determine if a parameter is worth fuzzing based on name and value
+        
+        Returns:
+            (should_fuzz: bool, reason: str)
+        """
+        param_lower = param_name.lower()
+        
+        # Always test high-value parameters
+        if param_lower in self.HIGH_VALUE_PARAMS:
+            return True, f"High-value parameter: {param_name}"
+        
+        # Skip low-value parameters (pagination, sorting, etc.)
+        if param_lower in self.LOW_VALUE_PARAMS:
+            return False, f"Low-value parameter (skip): {param_name}"
+        
+        # Skip simple numeric IDs (unless it's a high-value param)
+        # Example: id=12345 is probably just a lookup, not injectable
+        if param_value and param_value.isdigit() and len(param_value) < 12:
+            # But keep params that sound like they might take URLs/paths
+            if not any(keyword in param_lower for keyword in ['url', 'path', 'file', 'dir', 'redirect']):
+                return False, f"Simple numeric ID (skip): {param_name}={param_value}"
+        
+        # Default: test it
+        return True, f"Parameter eligible for testing"
 
     def _rate_limit_wait(self):
         """Wait to respect rate limit"""
@@ -963,9 +1147,17 @@ class ParamFuzzer:
         parsed = urlparse(url)
         params = parse_qs(parsed.query, keep_blank_values=True)
         
-        # Fuzz existing parameters
+        # Fuzz existing parameters (with smart filtering)
         for param, values in params.items():
             original_value = values[0] if values else ""
+            
+            # Check if parameter should be fuzzed
+            should_fuzz, reason = self.should_fuzz_parameter(param, original_value)
+            if not should_fuzz:
+                self.stats['skipped_params'] += 1
+                continue
+            
+            self.stats['params_tested'] += 1
             findings = self.fuzz_parameter(url, param, original_value)
             summary.findings.extend(findings)
             summary.parameters_tested += 1

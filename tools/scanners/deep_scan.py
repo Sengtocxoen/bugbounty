@@ -889,8 +889,12 @@ class DeepScanner:
             
             self.log(f"Running Nuclei on {len(targets_to_scan)} discovered targets...")
             
-            # Run Nuclei scan
-            nuclei_results = nuclei_scanner.scan_targets(targets_to_scan, safe_target)
+            # Run Nuclei scan with tech-based template selection
+            nuclei_results = nuclei_scanner.scan_targets(
+                targets_to_scan, 
+                safe_target,
+                technologies=result.technologies  # Pass detected tech for smart templates
+            )
             
             # Store results
             result.nuclei_scan = {

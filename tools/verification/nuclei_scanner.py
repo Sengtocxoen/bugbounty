@@ -14,6 +14,57 @@ from datetime import datetime
 import yaml
 
 
+# Technology to Nuclei Template Tag Mapping
+TECH_TO_NUCLEI_TAGS = {
+    # CMS
+    'wordpress': ['wordpress', 'wp-plugin', 'wp-theme', 'woocommerce'],
+    'drupal': ['drupal'],
+    'joomla': ['joomla'],
+    'magento': ['magento'],
+    'shopify': ['shopify'],
+    
+    # Languages/Frameworks
+    'php': ['php', 'laravel', 'symfony', 'codeigniter'],
+    'java': ['java', 'spring', 'struts', 'tomcat', 'jboss'],
+    'python': ['python', 'django', 'flask'],
+    'ruby': ['ruby', 'rails'],
+    'node.js': ['nodejs', 'express', 'nestjs'],
+    'node': ['nodejs', 'express', 'nestjs'],
+    'asp.net': ['asp', 'dotnet', 'iis'],
+    
+    # Web Servers
+    'nginx': ['nginx'],
+    'apache': ['apache', 'httpd'],
+    'iis': ['iis', 'asp'],
+    'tomcat': ['tomcat', 'java'],
+    
+    # Databases
+    'mysql': ['mysql', 'mariadb', 'sqli'],
+    'postgresql': ['postgresql', 'postgres', 'sqli'],
+    'mongodb': ['mongodb', 'nosqli'],
+    'redis': ['redis'],
+    
+    # Cloud/Infrastructure
+    'aws': ['aws', 's3', 'ec2', 'lambda'],
+    'docker': ['docker', 'container'],
+    'kubernetes': ['k8s', 'kubernetes'],
+    
+    # JavaScript Frameworks
+    'react': ['react'],
+    'vue.js': ['vue'],
+    'vue': ['vue'],
+    'angular': ['angular'],
+    
+    # APIs/Auth
+    'graphql': ['graphql'],
+    'jwt': ['jwt', 'token'],
+    'oauth': ['oauth'],
+}
+
+# Generic tags always included regardless of detected tech
+GENERIC_TAGS = ['xxe', 'xss', 'sqli', 'ssrf', 'cve', 'config', 'exposure']
+
+
 class NucleiScanner:
     """Nuclei vulnerability scanner with comprehensive configuration support"""
     
@@ -91,6 +142,49 @@ class NucleiScanner:
             self.logger.info("Nuclei templates updated successfully")
         except Exception as e:
             self.logger.warning(f"Failed to update templates: {e}")
+    
+    def select_tags_from_technologies(self, technologies: Dict[str, List[Dict]]) -> List[str]:
+        """
+        Intelligently select Nuclei tags based on detected technologies
+        
+        Args:
+            technologies: Dict from result.technologies
+                         {subdomain: [{name, category, version, vuln_notes}, ...]}
+        
+        Returns:
+            List of relevant Nuclei tags to use
+        """
+        selected_tags = set(GENERIC_TAGS)  # Always include generic checks
+        detected_tech_names = set()
+        
+        if not technologies:
+            self.logger.info("No technologies detected, using generic tags only")
+            return list(selected_tags)
+        
+        # Extract all unique technology names (case-insensitive)
+        for subdomain, tech_list in technologies.items():
+            for tech in tech_list:
+                tech_name = tech.get('name', '').lower()
+                if tech_name:
+                    detected_tech_names.add(tech_name)
+                
+                # Also check category
+                category = tech.get('category', '').lower()
+                if category:
+                    detected_tech_names.add(category)
+        
+        # Map detected technologies to Nuclei tags
+        for tech_name in detected_tech_names:
+            for tech_key, tags in TECH_TO_NUCLEI_TAGS.items():
+                # Flexible matching: "wordpress" matches "WordPress 5.8"
+                if tech_key in tech_name or tech_name in tech_key:
+                    selected_tags.update(tags)
+                    self.logger.debug(f"Matched '{tech_name}' -> tags: {tags}")
+        
+        self.logger.info(f"Detected technologies: {', '.join(sorted(detected_tech_names))}")
+        self.logger.info(f"Selected Nuclei tags ({len(selected_tags)}): {', '.join(sorted(selected_tags))}")
+        
+        return list(selected_tags)
     
     def load_targets_from_scan_results(self, scan_results_file: Path) -> List[str]:
         """
@@ -177,13 +271,15 @@ class NucleiScanner:
             self.logger.error(f"Failed to load targets from {scan_results_file}: {e}")
             return []
     
-    def build_nuclei_command(self, targets: List[str], output_file: Path) -> List[str]:
+    def build_nuclei_command(self, targets: List[str], output_file: Path, 
+                            technologies: Optional[Dict] = None) -> List[str]:
         """
-        Build Nuclei command with all configured options
+        Build Nuclei command with tech-based tag selection
         
         Args:
             targets: List of target URLs
             output_file: Output file for JSON results
+            technologies: Detected technologies dict for smart template selection
             
         Returns:
             Command list for subprocess
@@ -195,10 +291,18 @@ class NucleiScanner:
         if severity:
             cmd.extend(['-severity', ','.join(severity)])
         
-        # Tags
-        tags = self.config.get('tags', [])
-        if tags:
-            cmd.extend(['-tags', ','.join(tags)])
+        # SMART TAG SELECTION based on detected technologies
+        if technologies:
+            smart_tags = self.select_tags_from_technologies(technologies)
+            if smart_tags:
+                cmd.extend(['-tags', ','.join(smart_tags)])
+                self.logger.info(f"✓ Using tech-based templates ({len(smart_tags)} tags)")
+        else:
+            # Fallback to configured tags if no tech data available
+            tags = self.config.get('tags', [])
+            if tags:
+                cmd.extend(['-tags', ','.join(tags)])
+                self.logger.info(f"Using configured tags: {', '.join(tags)}")
         
         # Exclude tags
         exclude_tags = self.config.get('exclude_tags', [])
@@ -234,13 +338,15 @@ class NucleiScanner:
         
         return cmd
     
-    def scan_targets(self, targets: List[str], target_name: str = 'scan') -> Dict[str, Any]:
+    def scan_targets(self, targets: List[str], target_name: str = 'scan', 
+                    technologies: Optional[Dict] = None) -> Dict[str, Any]:
         """
-        Run Nuclei scan on target list
+        Run Nuclei scan on target list with tech-based template selection
         
         Args:
             targets: List of URLs to scan
             target_name: Name for output files
+            technologies: Detected technologies for smart template selection
             
         Returns:
             Scan results dictionary
@@ -263,12 +369,14 @@ class NucleiScanner:
             f.write('\n'.join(targets))
         
         self.logger.info(f"Starting Nuclei scan on {len(targets)} targets...")
+        if technologies:
+            self.logger.info("Using tech-based template selection")
         self.logger.info(f"Output: {json_output}")
         
         scan_start = datetime.now()
         
-        # Build command
-        cmd = self.build_nuclei_command(targets, json_output)
+        # Build command with tech-based tag selection
+        cmd = self.build_nuclei_command(targets, json_output, technologies)
         cmd.extend(['-list', str(targets_file)])
         
         try:
