@@ -341,6 +341,40 @@ class DeepScanner:
         """Check if shutdown was requested"""
         return SHUTDOWN_FLAG
 
+    def _build_url(self, target: str) -> str:
+        """Build URL for target, auto-detecting HTTP vs HTTPS.
+        
+        Tries HTTP first (handles non-TLS targets like Juice Shop on :3000),
+        then falls back to HTTPS. Caches the result per target.
+        """
+        if target.startswith('http://') or target.startswith('https://'):
+            return target
+        
+        # Check cache
+        if not hasattr(self, '_url_cache'):
+            self._url_cache = {}
+        if target in self._url_cache:
+            return self._url_cache[target]
+        
+        # Try HTTP first (catches non-TLS services like Juice Shop on :3000)
+        import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        for scheme in ['http', 'https']:
+            try:
+                url = f"{scheme}://{target}"
+                resp = requests.head(url, timeout=5, allow_redirects=True, verify=False)
+                if resp.status_code < 500:
+                    self._url_cache[target] = url
+                    return url
+            except Exception:
+                continue
+        
+        # Default to http:// if both fail (let the actual request handle the error)
+        fallback = f"http://{target}"
+        self._url_cache[target] = fallback
+        return fallback
+
     def log(self, message: str, level: str = "INFO"):
         """Log a message with timestamp"""
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -447,7 +481,7 @@ class DeepScanner:
 
         self.phase_header(2, "WAF DETECTION", target)
         
-        url = f"https://{target}"
+        url = self._build_url(target)
         self.log(f"Fingerprinting WAF for {url}...")
         
         try:
@@ -471,6 +505,241 @@ class DeepScanner:
             result.errors.append(f"WAF detection error: {e}")
             self.log(f"WAF Check Error: {e}", "ERROR")
 
+
+    # ======================== PROTOCOL SECURITY CHECK ========================
+
+    def phase_protocol_security(self, target: str, result: DeepScanResult):
+        """Check HTTP/HTTPS protocol security issues.
+        
+        Flags as findings:
+        - HTTP-only (no TLS encryption)
+        - HTTPS with invalid/expired/self-signed certificates
+        - HTTPS with weak TLS versions
+        - Missing HSTS header
+        - HTTP accessible without redirect to HTTPS
+        """
+        self.phase_header(2, "PROTOCOL SECURITY CHECK", target)
+        
+        import requests
+        import urllib3
+        import ssl
+        import socket
+        from datetime import datetime as dt
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        findings_count = 0
+        
+        # --- Check 1: Is HTTPS available? ---
+        https_available = False
+        https_valid_cert = False
+        cert_details = {}
+        
+        https_url = f"https://{target}"
+        http_url = f"http://{target}"
+        
+        # Try HTTPS with strict certificate validation
+        try:
+            resp = requests.head(https_url, timeout=10, allow_redirects=False, verify=True)
+            https_available = True
+            https_valid_cert = True
+            self.log(f"  [OK] HTTPS available with valid certificate", "SUCCESS")
+        except requests.exceptions.SSLError as ssl_err:
+            # HTTPS exists but cert is bad
+            try:
+                resp = requests.head(https_url, timeout=10, allow_redirects=False, verify=False)
+                https_available = True
+                https_valid_cert = False
+                ssl_error_msg = str(ssl_err)
+                
+                # Determine specific cert issue
+                if 'CERTIFICATE_VERIFY_FAILED' in ssl_error_msg:
+                    if 'expired' in ssl_error_msg.lower():
+                        cert_issue = "expired"
+                        severity = "medium"
+                    elif 'self signed' in ssl_error_msg.lower() or 'self-signed' in ssl_error_msg.lower():
+                        cert_issue = "self-signed"
+                        severity = "medium"
+                    elif 'hostname mismatch' in ssl_error_msg.lower():
+                        cert_issue = "hostname_mismatch"
+                        severity = "high"
+                    else:
+                        cert_issue = "invalid"
+                        severity = "medium"
+                else:
+                    cert_issue = "ssl_error"
+                    severity = "medium"
+                
+                finding = {
+                    "type": "ssl_certificate_issue",
+                    "target": target,
+                    "url": https_url,
+                    "issue": cert_issue,
+                    "detail": ssl_error_msg[:200],
+                    "severity": severity,
+                    "cwe": "CWE-295",
+                    "description": f"SSL/TLS certificate issue: {cert_issue}",
+                    "impact": "Users may be vulnerable to man-in-the-middle attacks. Browsers will show security warnings, reducing user trust.",
+                    "remediation": "Install a valid SSL/TLS certificate from a trusted Certificate Authority (CA). Ensure the certificate is not expired and matches the domain name.",
+                }
+                result.potential_issues.append(finding)
+                findings_count += 1
+                self.log(f"  [!!!] CERT ISSUE: {cert_issue} — {ssl_error_msg[:100]}", "FINDING")
+                
+            except Exception:
+                pass
+        except requests.exceptions.ConnectionError:
+            # HTTPS not available at all
+            self.log(f"  [!] HTTPS not available on {target}", "WARNING")
+        except Exception:
+            pass
+        
+        # --- Check 2: Is HTTP available? ---
+        http_available = False
+        http_redirects_to_https = False
+        
+        try:
+            resp = requests.head(http_url, timeout=10, allow_redirects=False, verify=False)
+            http_available = True
+            
+            # Check if HTTP redirects to HTTPS
+            if resp.status_code in [301, 302, 303, 307, 308]:
+                location = resp.headers.get('Location', '')
+                if location.startswith('https://'):
+                    http_redirects_to_https = True
+                    self.log(f"  [OK] HTTP redirects to HTTPS ({resp.status_code} → {location[:80]})", "SUCCESS")
+        except Exception:
+            pass
+        
+        # --- Finding: HTTP-only (no TLS at all) ---
+        if http_available and not https_available:
+            finding = {
+                "type": "no_tls",
+                "target": target,
+                "url": http_url,
+                "severity": "high",
+                "cwe": "CWE-319",
+                "description": "Service runs on HTTP only — no TLS/SSL encryption available",
+                "impact": "All data transmitted in cleartext. Credentials, session tokens, and sensitive data can be intercepted via network sniffing (MITM attacks).",
+                "remediation": "Enable HTTPS with a valid TLS certificate. Redirect all HTTP traffic to HTTPS. Consider using HSTS.",
+            }
+            result.potential_issues.append(finding)
+            findings_count += 1
+            self.log(f"  [!!!] NO TLS: {target} runs HTTP only — all traffic unencrypted", "FINDING")
+        
+        # --- Finding: HTTP accessible without redirect to HTTPS ---
+        if http_available and https_available and not http_redirects_to_https:
+            finding = {
+                "type": "http_no_redirect",
+                "target": target,
+                "url": http_url,
+                "severity": "low",
+                "cwe": "CWE-319",
+                "description": "HTTP accessible without redirect to HTTPS",
+                "impact": "Users who navigate to the HTTP version are not automatically redirected to HTTPS, leaving their initial request unencrypted.",
+                "remediation": "Configure HTTP to 301 redirect to HTTPS for all paths.",
+            }
+            result.potential_issues.append(finding)
+            findings_count += 1
+            self.log(f"  [!] HTTP does not redirect to HTTPS", "WARNING")
+        
+        # --- Check 3: TLS version and certificate details ---
+        if https_available:
+            hostname = target.split(':')[0]
+            port = int(target.split(':')[1]) if ':' in target else 443
+            
+            try:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                
+                with socket.create_connection((hostname, port), timeout=10) as sock:
+                    with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+                        tls_version = ssock.version()
+                        cipher = ssock.cipher()
+                        cert = ssock.getpeercert(binary_form=False)
+                        
+                        # Check weak TLS versions
+                        weak_versions = ['SSLv2', 'SSLv3', 'TLSv1', 'TLSv1.0', 'TLSv1.1']
+                        if tls_version in weak_versions:
+                            finding = {
+                                "type": "weak_tls_version",
+                                "target": target,
+                                "url": https_url,
+                                "tls_version": tls_version,
+                                "severity": "medium",
+                                "cwe": "CWE-326",
+                                "description": f"Weak TLS version in use: {tls_version}",
+                                "impact": f"TLS {tls_version} has known vulnerabilities (POODLE, BEAST, etc.). Encrypted traffic may be decryptable.",
+                                "remediation": "Disable TLS 1.0 and 1.1. Only support TLS 1.2 and TLS 1.3.",
+                            }
+                            result.potential_issues.append(finding)
+                            findings_count += 1
+                            self.log(f"  [!!!] WEAK TLS: {tls_version}", "FINDING")
+                        else:
+                            self.log(f"  [OK] TLS version: {tls_version}", "SUCCESS")
+                        
+                        # Check certificate expiry
+                        if cert:
+                            not_after = cert.get('notAfter', '')
+                            if not_after:
+                                try:
+                                    from email.utils import parsedate_to_datetime
+                                    expiry = parsedate_to_datetime(not_after)
+                                    days_left = (expiry - dt.now(expiry.tzinfo)).days
+                                    
+                                    if days_left < 0:
+                                        finding = {
+                                            "type": "expired_certificate",
+                                            "target": target,
+                                            "url": https_url,
+                                            "expired_days_ago": abs(days_left),
+                                            "expiry_date": not_after,
+                                            "severity": "high",
+                                            "cwe": "CWE-298",
+                                            "description": f"SSL certificate expired {abs(days_left)} days ago (expired: {not_after})",
+                                            "impact": "Browsers show security warnings. Users may be trained to ignore certificate warnings, making MITM attacks easier.",
+                                            "remediation": "Renew the SSL certificate immediately.",
+                                        }
+                                        result.potential_issues.append(finding)
+                                        findings_count += 1
+                                        self.log(f"  [!!!] EXPIRED CERT: expired {abs(days_left)} days ago", "FINDING")
+                                    elif days_left < 30:
+                                        self.log(f"  [!] Certificate expires in {days_left} days", "WARNING")
+                                    else:
+                                        self.log(f"  [OK] Certificate valid for {days_left} days", "SUCCESS")
+                                except Exception:
+                                    pass
+                                    
+            except Exception as e:
+                self.log(f"  [!] TLS inspection error: {e}", "WARNING")
+        
+        # --- Check 4: HSTS header ---
+        if https_available:
+            try:
+                resp = requests.get(https_url, timeout=10, allow_redirects=True, verify=False)
+                hsts = resp.headers.get('Strict-Transport-Security', '')
+                
+                if not hsts:
+                    finding = {
+                        "type": "missing_hsts",
+                        "target": target,
+                        "url": https_url,
+                        "severity": "low",
+                        "cwe": "CWE-319",
+                        "description": "Missing Strict-Transport-Security (HSTS) header",
+                        "impact": "Without HSTS, browsers may allow downgrade attacks from HTTPS to HTTP. First-time visitors are not protected.",
+                        "remediation": "Add the Strict-Transport-Security header: 'max-age=31536000; includeSubDomains; preload'",
+                    }
+                    result.potential_issues.append(finding)
+                    findings_count += 1
+                    self.log(f"  [!] Missing HSTS header", "WARNING")
+                else:
+                    self.log(f"  [OK] HSTS header present: {hsts[:80]}", "SUCCESS")
+            except Exception:
+                pass
+        
+        result.phases_completed.append("protocol_security")
+        self.log(f"Protocol security check complete: {findings_count} issues found", "SUCCESS")
 
     # ======================== PHASE 3: CLOUD ENUMERATION ========================
 
@@ -575,7 +844,7 @@ class DeepScanner:
             if self.check_shutdown():
                 break
 
-            url = f"https://{target}" if not target.startswith('http') else target
+            url = self._build_url(target)
             self.log(f"Discovering endpoints [{i+1}/{len(targets)}]: {url}")
 
             try:
@@ -637,7 +906,7 @@ class DeepScanner:
             if self.check_shutdown():
                 break
 
-            url = f"https://{target}" if not target.startswith('http') else target
+            url = self._build_url(target)
             self.log(f"Detecting technologies [{i+1}/{len(targets)}]: {url}")
 
             try:
@@ -702,7 +971,7 @@ class DeepScanner:
             if self.check_shutdown():
                 break
 
-            url = f"https://{target}" if not target.startswith('http') else target
+            url = self._build_url(target)
             self.log(f"Analyzing JavaScript [{i+1}/{len(targets)}]: {url}")
 
             try:
@@ -772,7 +1041,7 @@ class DeepScanner:
 
         # Add main targets
         for target in targets:
-            url = f"https://{target}" if not target.startswith('http') else target
+            url = self._build_url(target)
             urls_to_fuzz.add(url)
 
         # Add interesting endpoints
@@ -972,6 +1241,9 @@ class DeepScanner:
 
             # Phase 2: WAF Detection
             self.phase_waf_detection(target, result)
+            
+            # Protocol Security Check (HTTP/HTTPS/TLS/Cert)
+            self.phase_protocol_security(target, result)
             
             # Phase 3: Cloud Enumeration
             self.phase_cloud_enumeration(target, result)
