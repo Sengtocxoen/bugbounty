@@ -183,7 +183,8 @@ class WebHackingScanner:
             scanners[tech_id] = tech_info["class"](
                 rate_limit=self.rate_limit,
                 user_agent=self.user_agent,
-                verbose=self.verbose
+                verbose=self.verbose,
+                scheme=self.scheme
             )
         return scanners
 
@@ -241,6 +242,21 @@ class WebHackingScanner:
         # Add domains to progress
         for domain in domains:
             self.progress.add_domain(domain, self.techniques)
+        # Auto-detect scheme for the first domain
+        self.scheme = 'https'
+        if domains:
+            import urllib3
+            import requests
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            for s in ['http', 'https']:
+                try:
+                    resp = requests.head(f"{s}://{domains[0]}/", timeout=5, verify=False)
+                    if resp.status_code < 500:
+                        self.scheme = s
+                        break
+                except Exception:
+                    continue
+            self.log(f"Using scheme: {self.scheme}://", "info")
 
         # Initialize scanners
         scanners = self._init_scanners()

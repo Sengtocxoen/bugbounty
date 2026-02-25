@@ -695,24 +695,37 @@ def _validate_path_traversal(resp: requests.Response) -> Tuple[bool, str]:
 
 
 def _detect_open_redirect(resp: requests.Response) -> bool:
-    """Detect open redirect"""
+    """Detect open redirect — checks Location hostname only (not query string)."""
     if not resp:
         return False
     if resp.status_code in [301, 302, 303, 307, 308]:
         location = resp.headers.get('Location', '')
-        if 'evil.com' in location:
+        parsed = urlparse(location)
+        if parsed.hostname and 'evil.com' in parsed.hostname:
             return True
+        # Protocol-relative: //evil.com/...
+        if location.startswith('//'):
+            parts = location.split('/')
+            host_part = parts[2] if len(parts) > 2 else ''
+            if 'evil.com' in host_part:
+                return True
     return False
 
 
 def _validate_open_redirect(resp: requests.Response, payload: str) -> Tuple[bool, str]:
-    """Validate open redirect points to external domain"""
+    """Validate open redirect — only confirms when Location hostname is evil.com."""
     if resp.status_code not in [301, 302, 303, 307, 308]:
         return False, "Not a redirect"
     location = resp.headers.get('Location', '')
-    if 'evil.com' in location:
+    parsed = urlparse(location)
+    if parsed.hostname and 'evil.com' in parsed.hostname:
         return True, f"Redirect to: {location}"
-    return False, "Redirect not to target"
+    if location.startswith('//'):
+        parts = location.split('/')
+        host_part = parts[2] if len(parts) > 2 else ''
+        if 'evil.com' in host_part:
+            return True, f"Protocol-relative redirect to: {location}"
+    return False, "Redirect not to external domain"
 
 
 def _detect_cmdi(resp: requests.Response, canary: str) -> bool:
@@ -727,9 +740,22 @@ def _detect_cmdi(resp: requests.Response, canary: str) -> bool:
 def _validate_cmdi(resp: requests.Response, payload: str, canary: str, response_time: float = None) -> Tuple[bool, str]:
     """Validate command injection with multiple techniques (output + time-based)"""
     content = resp.text
-    
+
+    # Skip non-text content types (images/fonts echoing params in metadata)
+    content_type = resp.headers.get('Content-Type', '')
+    if any(t in content_type for t in ['image/', 'font/', 'audio/', 'video/']):
+        return False, "Non-text response - canary in binary data"
+
     # Method 1: Direct output reflection (echo commands)
     if f"cmd_test_{canary}" in content:
+        # Check if the full payload command is reflected near the canary
+        # If the payload text itself appears, it's reflection not execution
+        canary_pos = content.find(f"cmd_test_{canary}")
+        surrounding = content[max(0, canary_pos - 50):canary_pos + 50 + len(canary)]
+        payload_fragments = ['echo cmd_test_', '`echo ', '$(echo ', 'echo%20cmd_test_']
+        if any(frag in surrounding for frag in payload_fragments):
+            return False, "Canary adjacent to echo command - likely reflection not execution"
+
         # Verify it's actual command output, not just reflection in error message
         # Command output should be in plain text, not in quotes or HTML-encoded
         if re.search(rf'cmd_test_{canary}(?!["\'])', content):
@@ -737,11 +763,11 @@ def _validate_cmdi(resp: requests.Response, payload: str, canary: str, response_
             context_start = max(0, content.find(f"cmd_test_{canary}") - 50)
             context_end = min(len(content), content.find(f"cmd_test_{canary}") + 50)
             context = content[context_start:context_end].lower()
-            
+
             # If surrounded by error keywords, likely not execution
             if not any(keyword in context for keyword in ['error', 'invalid', 'failed', 'exception']):
                 return True, "Command output confirmed (canary in clean context)"
-        
+
         return False, "Canary reflected but likely in error message, not execution"
     
     # Method 2: Time-based detection (sleep/timeout commands)
@@ -793,10 +819,21 @@ def _validate_lfi(resp: requests.Response, payload: str) -> Tuple[bool, str]:
     return False, "No LFI confirmed"
 
 
-def _detect_ssti(resp: requests.Response) -> bool:
-    """Detect SSTI with basic check"""
+def _detect_ssti(resp: requests.Response, baseline_49_count: int = 0) -> bool:
+    """Detect SSTI with word-boundary check and baseline comparison"""
     if not resp or not resp.text: return False
-    return '49' in resp.text or 'java.lang.Runtime' in resp.text
+    # Check for Java reflection (always a strong signal)
+    if 'java.lang.Runtime' in resp.text:
+        return True
+    # Check for '49' with word boundaries (not part of prices, IDs, etc.)
+    matches = re.findall(r'(?<![0-9./\-])49(?![0-9./\-])', resp.text)
+    if not matches:
+        return False
+    # Only flag if '49' count increased compared to baseline (avoid false positives from
+    # pages that already contain "49" in prices, product IDs, etc.)
+    if baseline_49_count > 0 and len(matches) <= baseline_49_count:
+        return False
+    return True
 
 
 def _validate_ssti(resp: requests.Response, payload: str) -> Tuple[bool, str]:
@@ -1064,12 +1101,23 @@ class ParamFuzzer:
         parsed = urlparse(url)
         base_params = parse_qs(parsed.query, keep_blank_values=True)
 
+        # Pre-compute baseline '49' count for SSTI false-positive filtering
+        baseline_49_count = 0
+        if baseline and baseline.text:
+            baseline_49_count = len(re.findall(r'(?<![0-9./\-])49(?![0-9./\-])', baseline.text))
+
         for vuln_type in vuln_types:
             if vuln_type not in FUZZ_PAYLOADS:
                 continue
 
             config = FUZZ_PAYLOADS[vuln_type]
             canary = hashlib.md5(f"{url}:{param}:{time.time()}".encode()).hexdigest()[:8]
+
+            # Override SSTI detect with baseline-aware version
+            if vuln_type == 'ssti':
+                _b49 = baseline_49_count
+                config = dict(config)  # shallow copy to avoid mutating module-level dict
+                config["detect"] = lambda resp, _, b49=_b49: _detect_ssti(resp, b49)
             
             for payload in config["payloads"]:
                 test_payload = payload.replace("{{CANARY}}", canary)

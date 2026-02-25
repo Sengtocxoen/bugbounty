@@ -6,9 +6,14 @@ Verifies admin panel accessibility and authentication requirements.
 """
 
 import requests
-from bs4 import BeautifulSoup
 from typing import Optional, List, Dict
 from . import BaseVerifier, VerificationResult, Severity, ConfidenceLevel
+
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
 
 
 class AdminVerifier(BaseVerifier):
@@ -193,6 +198,8 @@ class AdminVerifier(BaseVerifier):
     
     def _parse_admin_page(self, html: str) -> Dict:
         """Parse admin page for details"""
+        if not BS4_AVAILABLE:
+            return {}
         try:
             soup = BeautifulSoup(html, 'html.parser')
             
@@ -223,6 +230,8 @@ class AdminVerifier(BaseVerifier):
             ("admin", ""),
         ]
         
+        if not BS4_AVAILABLE:
+            return False
         try:
             soup = BeautifulSoup(html, 'html.parser')
             form = soup.find('form')

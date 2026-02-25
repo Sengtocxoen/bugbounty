@@ -110,7 +110,7 @@ class ProtocolAttacks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # Try WebSocket upgrade
             headers = {
@@ -140,7 +140,7 @@ class ProtocolAttacks(TechniqueScanner):
         """Test WebSocket endpoint for CSWSH (Cross-Site WebSocket Hijacking)"""
         findings = []
 
-        url = f"https://{domain}{endpoint}"
+        url = f"{self.scheme}://{domain}{endpoint}"
 
         # Test without Origin header
         headers = {
@@ -180,7 +180,7 @@ class ProtocolAttacks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # Test introspection
             resp = self.post(url,
@@ -217,7 +217,7 @@ class ProtocolAttacks(TechniqueScanner):
     def _test_graphql_injection(self, domain: str, endpoint: str) -> List[Dict]:
         """Test GraphQL endpoint for injection vulnerabilities"""
         findings = []
-        url = f"https://{domain}{endpoint}"
+        url = f"{self.scheme}://{domain}{endpoint}"
 
         baseline_resp = self.post(url, json={"query": "{ __typename }"}, headers={"Content-Type": "application/json"})
         baseline_text = baseline_resp.text.lower() if baseline_resp and baseline_resp.text else ""
@@ -279,7 +279,7 @@ class ProtocolAttacks(TechniqueScanner):
         # If HTTP/2 supported, check for potential issues
         if result["http2_supported"]:
             # Check if server properly handles HTTP/2
-            url = f"https://{domain}/"
+            url = f"{self.scheme}://{domain}/"
             resp = self.get(url, allow_redirects=True)
 
             if resp:
@@ -297,7 +297,7 @@ class ProtocolAttacks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # gRPC uses application/grpc content type
             headers = {
@@ -317,7 +317,7 @@ class ProtocolAttacks(TechniqueScanner):
                     })
 
         # Check for gRPC-web
-        grpc_web_test = f"https://{domain}/api"
+        grpc_web_test = f"{self.scheme}://{domain}/api"
         headers = {"Content-Type": "application/grpc-web+proto"}
         resp = self.post(grpc_web_test, data=b'', headers=headers)
 
@@ -347,7 +347,7 @@ class ProtocolAttacks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             headers = {"Accept": "text/event-stream"}
             resp = self.get(url, headers=headers, allow_redirects=False, timeout=5)
@@ -369,9 +369,9 @@ class ProtocolAttacks(TechniqueScanner):
 
         # Test various origins
         test_origins = [
-            f"https://{domain}",  # Same origin
+            f"{self.scheme}://{domain}",  # Same origin
             "https://evil.com",
-            f"https://{domain}.evil.com",
+            f"{self.scheme}://{domain}.evil.com",
             "null",
         ]
 
@@ -381,7 +381,7 @@ class ProtocolAttacks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             for origin in test_origins:
                 headers = {

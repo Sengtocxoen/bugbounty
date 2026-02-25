@@ -67,7 +67,7 @@ from analysis.js_analyzer import JSAnalyzer
 from analysis.param_fuzzer import ParamFuzzer, FUZZ_PAYLOADS
 from discovery.cloud_enum import CloudEnumerator, CloudEnumResult
 from techniques.waf_evasion import WAFEvader, WAFInfo
-from verification.nuclei_scanner import NucleiScanner
+from scanners.external_scanners import ExternalScanners
 
 
 # Global flag for graceful shutdown
@@ -142,6 +142,15 @@ class DeepScanConfig:
     custom_rate_limit: float = 0.0
     custom_request_delay: float = 0.0
     custom_timeout: int = 0
+
+    # Per-phase timeouts (seconds); 0 = no timeout (run until complete)
+    phase_timeouts: Dict[str, int] = field(default_factory=lambda: {
+        'js_analysis': 0,
+        'param_fuzzing': 0,
+        'endpoint_discovery': 0,
+        'external_scanners': 0,
+        'verification': 0,
+    })
     
     def load_from_yaml(self):
         """Load configuration from YAML file"""
@@ -182,6 +191,10 @@ class DeepScanConfig:
                 self.max_endpoints = limits.get('max_endpoints', 0)
                 self.max_js_files = limits.get('max_js_files', 0)
                 self.max_fuzz_urls = limits.get('max_fuzz_urls', 0)
+
+            # Load phase timeouts
+            if 'phase_timeouts' in data:
+                self.phase_timeouts.update(data['phase_timeouts'])
 
             # Load phases (optional - CLI usually overrides, but we can respect config if CLI didn't disable)
             if 'phases' in data:
@@ -236,8 +249,8 @@ class DeepScanResult:
     # WAF Detection
     waf_info: Dict[str, Any] = field(default_factory=dict)
 
-    # Nuclei Scan Results
-    nuclei_scan: Dict[str, Any] = field(default_factory=dict)
+    # External Scanner Results (nikto + wapiti + nuclei)
+    external_scan: Dict[str, Any] = field(default_factory=dict)
 
     # Vulnerability findings
     vulnerabilities: List[Dict] = field(default_factory=list)
@@ -279,7 +292,10 @@ class DeepScanner:
             self.subdomain_scanner = EnhancedSubdomainScanner()
         self.endpoint_discovery = EndpointDiscovery()
         self.tech_detector = TechDetector()
-        self.js_analyzer = JSAnalyzer()
+        self.js_analyzer = JSAnalyzer(
+            max_js_files=config.max_js_files,
+            max_file_size=1_048_576,
+        )
         self.param_fuzzer = ParamFuzzer()
         self.cloud_enumerator = CloudEnumerator()
         self.waf_evader = WAFEvader()
@@ -394,6 +410,27 @@ class DeepScanner:
         print(f"  PHASE {phase_num}: {phase_name}")
         print(f"  Target: {target}")
         print(f"{'='*80}")
+
+    def _run_phase_with_timeout(self, phase_func, timeout: int, *args):
+        """Run a scan phase with a timeout. Returns None on timeout."""
+        if timeout <= 0:
+            phase_func(*args)
+            return
+
+        phase_name = phase_func.__name__
+        self.log(f"Running {phase_name} with {timeout}s timeout")
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(phase_func, *args)
+        try:
+            future.result(timeout=timeout)
+        except (TimeoutError, Exception) as e:
+            if 'TimeoutError' in type(e).__name__ or 'Timeout' in type(e).__name__:
+                self.log(f"{phase_name} timed out after {timeout}s - moving to next phase", "WARNING")
+                future.cancel()
+            else:
+                self.log(f"{phase_name} failed: {e}", "ERROR")
+        finally:
+            executor.shutdown(wait=False)
 
     # ======================== PHASE 1: SUBDOMAIN DISCOVERY ========================
 
@@ -1102,119 +1139,175 @@ class DeepScanner:
         result.phases_completed.append("param_fuzzing")
         self.log(f"Parameter fuzzing complete: {len(result.vulnerabilities)} vulnerabilities found", "SUCCESS")
 
-    # ======================== PHASE 9: NUCLEI VULNERABILITY SCANNING ========================
+    # ======================== PHASE 9: EXTERNAL VULNERABILITY SCANNERS ========================
 
-    def phase_nuclei_scan(self, target: str, result: DeepScanResult):
+    def phase_external_scanners(self, target: str, result: DeepScanResult):
         """
-        Phase 9: Nuclei vulnerability scanning (NEW!)
-        Automatically scan discovered targets with Nuclei templates
+        Phase 9: External vulnerability scanners (nikto + wapiti + nuclei)
+        Runs three tools with per-tool timeouts and unified result parsing.
         """
-        # Check if Nuclei is enabled in config
-        nuclei_config = None
+        # Load external_scanners config from YAML
+        ext_config = {}
         if self.config.config_file and self.config.config_file.exists():
             try:
                 import yaml
                 with open(self.config.config_file) as f:
                     full_config = yaml.safe_load(f)
-                    nuclei_config = full_config.get('nuclei_scan', {})
+                    ext_config = full_config.get('external_scanners', {})
             except Exception as e:
-                self.log(f"Could not load Nuclei config: {e}", "WARNING")
-        
-        # Check if enabled
-        if nuclei_config and not nuclei_config.get('enabled', False):
-            self.log("Nuclei scanning disabled in config", "WARNING")
-            return
-        
-        self.phase_header(9, "NUCLEI VULNERABILITY SCANNING", target)
-        
+                self.log(f"Could not load external_scanners config: {e}", "WARNING")
+
+        self.phase_header(9, "EXTERNAL VULNERABILITY SCANNERS", target)
+
         try:
-            # Initialize Nuclei scanner
-            output_dir = self.config.output_dir.parent / "nuclei_results"
-            nuclei_scanner = NucleiScanner(config=nuclei_config, output_dir=output_dir)
-            
-            # First, save current results to JSON so we can extract targets
             safe_target = target.replace("://", "_").replace("/", "_").replace(":", "_")
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            target_dir = self.config.output_dir / safe_target
-            target_dir.mkdir(parents=True, exist_ok=True)
-            temp_json = target_dir / f"temp_scan_for_nuclei_{timestamp}.json"
-            
-            # Write temp results for target extraction
-            with open(temp_json, 'w') as f:
-                data = {
-                    "subdomains": result.subdomains,
-                    "endpoints": result.endpoints,
-                    "api_endpoints": result.api_endpoints,
-                    "cloud_buckets": result.cloud_buckets,
-                    "open_ports": result.open_ports
-                }
-                json.dump(data, f)
-            
-            # Extract targets from scan results
-            targets_to_scan = nuclei_scanner.load_targets_from_scan_results(temp_json)
-            
-            # Cleanup temp file
-            temp_json.unlink(missing_ok=True)
-            
-            if not targets_to_scan:
-                self.log("No targets found for Nuclei scan", "WARNING")
-                return
-            
-            self.log(f"Running Nuclei on {len(targets_to_scan)} discovered targets...")
-            
-            # Run Nuclei scan with tech-based template selection
-            nuclei_results = nuclei_scanner.scan_targets(
-                targets_to_scan, 
-                safe_target,
-                technologies=result.technologies  # Pass detected tech for smart templates
+            output_dir = self.config.output_dir / safe_target / "external_scanners"
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            scanner = ExternalScanners(output_dir=output_dir, config=ext_config)
+
+            # Root URLs for nikto/wapiti (they crawl from root, no need for paths)
+            root_targets = set()
+            root_targets.add(self._build_url(target))
+
+            # Add live subdomains as root URLs
+            for sub, info in result.subdomains.items():
+                if info.get('is_alive'):
+                    if info.get('https_status'):
+                        root_targets.add(f"https://{sub}")
+                    elif info.get('http_status'):
+                        root_targets.add(f"http://{sub}")
+
+            # Full URL list for nuclei (tests templates against every URL)
+            nuclei_targets = set(root_targets)
+            for ep in result.endpoints:
+                ep_url = ep.get('url', '') if isinstance(ep, dict) else str(ep)
+                if ep_url and ep_url.startswith('http'):
+                    nuclei_targets.add(ep_url)
+            for ep in result.api_endpoints:
+                ep_url = ep.get('url', ep) if isinstance(ep, dict) else str(ep)
+                if ep_url and ep_url.startswith('http'):
+                    nuclei_targets.add(ep_url)
+
+            root_targets = list(root_targets)
+            nuclei_targets = list(nuclei_targets)
+
+            self.log(f"Running external scanners...")
+            self.log(f"  nikto/wapiti targets: {len(root_targets)} root URLs")
+            self.log(f"  nuclei targets: {len(nuclei_targets)} URLs (incl. endpoints)")
+            enabled = []
+            if ext_config.get('nikto', True):
+                enabled.append('nikto')
+            if ext_config.get('wapiti', True):
+                enabled.append('wapiti')
+            if ext_config.get('nuclei', True):
+                enabled.append('nuclei')
+            self.log(f"  Enabled tools: {', '.join(enabled)}")
+
+            ext_results = scanner.scan_all(
+                root_targets, output_dir, config=ext_config,
+                nuclei_targets=nuclei_targets,
             )
-            
+
             # Store results
-            result.nuclei_scan = {
-                "enabled": True,
-                "scan_start": nuclei_results.get("summary", {}).get("scan_start"),
-                "scan_end": nuclei_results.get("summary", {}).get("scan_end"),
-                "targets_scanned": len(targets_to_scan),
-                "vulnerabilities_found": len(nuclei_results.get("findings", [])),
-                "by_severity": nuclei_results.get("summary", {}).get("by_severity", {}),
-                "findings": nuclei_results.get("findings", []),
-                "output_files": nuclei_results.get("output_files", {})
+            result.external_scan = {
+                "scan_start": ext_results.get("summary", {}).get("scan_start"),
+                "scan_end": ext_results.get("summary", {}).get("scan_end"),
+                "targets_scanned": len(root_targets),
+                "nuclei_targets_scanned": len(nuclei_targets),
+                "total_findings": len(ext_results.get("all_findings", [])),
+                "by_severity": ext_results.get("summary", {}).get("by_severity", {}),
+                "by_tool": ext_results.get("summary", {}).get("by_tool", {}),
+                "findings": ext_results.get("all_findings", []),
             }
-            
-            # Add Nuclei findings to vulnerabilities list
-            for finding in nuclei_results.get("findings", []):
+
+            # Add findings to main vulnerabilities list
+            for finding in ext_results.get("all_findings", []):
                 result.vulnerabilities.append({
-                    "vuln_type": "nuclei_finding",
-                    "vuln_name": finding.get("name"),
-                    "severity": finding.get("severity"),
-                    "target": finding.get("matched_at"),
-                    "template_id": finding.get("template_id"),
-                    "description": finding.get("description"),
-                    "remediation": finding.get("remediation"),
-                    "reference": finding.get("reference", []),
-                    "cwe": ", ".join(finding.get("classification", {}).get("cwe-id", [])),
-                    "cvss": finding.get("classification", {}).get("cvss-score"),
-                    "tags": finding.get(" tags", []),
-                    "tool": "nuclei"
+                    "vuln_type": f"{finding.get('tool', 'external')}_finding",
+                    "vuln_name": finding.get("title"),
+                    "severity": finding.get("severity", "info"),
+                    "target": finding.get("url", target),
+                    "url": finding.get("url", ""),
+                    "parameter": "",
+                    "payload": "",
+                    "description": finding.get("description", ""),
+                    "evidence": finding.get("evidence", ""),
+                    "confidence": "medium",
+                    "tool": finding.get("tool", "external"),
+                    "category": finding.get("category", ""),
                 })
-            
-            result.phases_completed.append("nuclei_scan")
-            
-            summary = nuclei_results.get("summary", {})
-            by_severity = summary.get("by_severity", {})
-            self.log(f"Nuclei scan complete!", "SUCCESS")
-            self.log(f"  Critical: {by_severity.get('critical', 0)}, "
-                    f"High: {by_severity.get('high', 0)}, "
-                    f"Medium: {by_severity.get('medium', 0)}")
-            
-        except ImportError:
-            self.log("Nuclei scanner module not found. Skipping Nuclei scan.", "WARNING")
-        except RuntimeError as e:
-            self.log(f"Nuclei not installed: {e}", "WARNING")
-            self.log("Install with: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest")
+
+            result.phases_completed.append("external_scanners")
+
+            summary = ext_results.get("summary", {})
+            by_sev = summary.get("by_severity", {})
+            by_tool = summary.get("by_tool", {})
+            self.log(f"External scanners complete!", "SUCCESS")
+            self.log(f"  Total findings: {summary.get('total_findings', 0)}")
+            self.log(f"  By tool: nikto={by_tool.get('nikto', 0)}, "
+                     f"wapiti={by_tool.get('wapiti', 0)}, "
+                     f"nuclei={by_tool.get('nuclei', 0)}")
+            self.log(f"  By severity: critical={by_sev.get('critical', 0)}, "
+                     f"high={by_sev.get('high', 0)}, "
+                     f"medium={by_sev.get('medium', 0)}")
+
         except Exception as e:
-            result.errors.append(f"Nuclei scan error: {str(e)}")
-            self.log(f"Nuclei scan error: {e}", "ERROR")
+            result.errors.append(f"External scanners error: {str(e)}")
+            self.log(f"External scanners error: {e}", "ERROR")
+            traceback.print_exc()
+
+    # ======================== PHASE 10: VERIFICATION ========================
+
+    def phase_verification(self, result: DeepScanResult):
+        """
+        Phase 10: Verify discovered findings using VerificationManager
+        """
+        self.phase_header(10, "VULNERABILITY VERIFICATION", result.target)
+
+        if self.check_shutdown():
+            return
+
+        try:
+            from verification.verification_manager import VerificationManager
+
+            user_agent = None
+            if self.program_config:
+                user_agent = self.program_config.user_agent
+
+            manager = VerificationManager(
+                user_agent=user_agent,
+                timeout=10,
+                max_workers=self.config.verification_threads,
+                verbose=self.config.verbose,
+            )
+
+            # Build scan_results dict from DeepScanResult for the manager
+            scan_results = {
+                "target": result.target,
+                "endpoints": result.endpoints,
+                "open_ports": result.open_ports,
+                "subdomains": result.subdomains,
+                "potential_issues": result.potential_issues,
+            }
+
+            verified = manager.verify_scan_results(scan_results)
+
+            result.verified_findings = verified.get("verified_findings", [])
+            result.verification_summary = verified.get("verification_summary", {})
+            result.phases_completed.append("verification")
+
+            summary = result.verification_summary
+            self.log(
+                f"Verification complete: {summary.get('verified_findings', 0)}/{summary.get('total_findings', 0)} verified",
+                "SUCCESS",
+            )
+
+        except ImportError:
+            self.log("Verification module not found. Skipping.", "WARNING")
+        except Exception as e:
+            result.errors.append(f"Verification error: {str(e)}")
+            self.log(f"Verification error: {e}", "ERROR")
             traceback.print_exc()
 
     # ======================== MAIN SCAN ORCHESTRATOR ========================
@@ -1269,22 +1362,34 @@ class DeepScanner:
                 result.scan_end = datetime.utcnow().isoformat()
                 return result
 
-            # Phase 7: JavaScript Analysis
-            self.phase_js_analysis(alive_targets, js_files, result)
+            # Phase 7: JavaScript Analysis (with timeout)
+            timeout = self.config.phase_timeouts.get('js_analysis', 300)
+            self._run_phase_with_timeout(self.phase_js_analysis, timeout, alive_targets, js_files, result)
 
             if self.check_shutdown():
                 result.scan_end = datetime.utcnow().isoformat()
                 return result
 
-            # Phase 8: Parameter Fuzzing
-            self.phase_param_fuzzing(alive_targets, result)
+            # Phase 8: Parameter Fuzzing (with timeout)
+            timeout = self.config.phase_timeouts.get('param_fuzzing', 600)
+            self._run_phase_with_timeout(self.phase_param_fuzzing, timeout, alive_targets, result)
 
             if self.check_shutdown():
                 result.scan_end = datetime.utcnow().isoformat()
                 return result
 
-            # Phase 9: Nuclei Vulnerability Scanning (NEW)
-            self.phase_nuclei_scan(target, result)
+            # Phase 9: External Vulnerability Scanners (with timeout)
+            timeout = self.config.phase_timeouts.get('external_scanners', 1200)
+            self._run_phase_with_timeout(self.phase_external_scanners, timeout, target, result)
+
+            if self.check_shutdown():
+                result.scan_end = datetime.utcnow().isoformat()
+                return result
+
+            # Phase 10: Verification (with timeout)
+            if not self.config.skip_verification:
+                timeout = self.config.phase_timeouts.get('verification', 300)
+                self._run_phase_with_timeout(self.phase_verification, timeout, result)
 
         except Exception as e:
             result.errors.append(f"Fatal error: {str(e)}")
@@ -1397,7 +1502,7 @@ class DeepScanner:
                     "dom_sinks": result.dom_sinks,
                     "vulnerabilities": result.vulnerabilities,
                     "potential_issues": result.potential_issues,
-                    "nuclei_scan": result.nuclei_scan,
+                    "external_scan": result.external_scan,
                     "errors": result.errors,
                 }
                 json.dump(data, f, indent=2, default=str)

@@ -76,7 +76,7 @@ class XSLeaks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # Make multiple requests and check ETag variation
             etags = []
@@ -113,7 +113,7 @@ class XSLeaks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # Measure response times
             times = []
@@ -150,7 +150,7 @@ class XSLeaks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # Measure content lengths
             lengths = []
@@ -192,8 +192,8 @@ class XSLeaks(TechniqueScanner):
             nonexistent_id = "99999999999"
 
             for existing_id in existing_ids:
-                exist_url = f"https://{domain}{endpoint_template.replace('{id}', existing_id)}"
-                nonexist_url = f"https://{domain}{endpoint_template.replace('{id}', nonexistent_id)}"
+                exist_url = f"{self.scheme}://{domain}{endpoint_template.replace('{id}', existing_id)}"
+                nonexist_url = f"{self.scheme}://{domain}{endpoint_template.replace('{id}', nonexistent_id)}"
 
                 resp_exist = self.get(exist_url, allow_redirects=False)
                 resp_nonexist = self.get(nonexist_url, allow_redirects=False)
@@ -219,7 +219,7 @@ class XSLeaks(TechniqueScanner):
 
     def _check_frame_counting(self, domain: str) -> Dict:
         """Check if frame counting attack might be possible"""
-        url = f"https://{domain}/"
+        url = f"{self.scheme}://{domain}/"
         resp = self.get(url, allow_redirects=True)
 
         if resp is None:
@@ -249,7 +249,7 @@ class XSLeaks(TechniqueScanner):
 
     def _check_coop_coep(self, domain: str) -> Dict:
         """Check for Cross-Origin Opener Policy and Embedder Policy"""
-        url = f"https://{domain}/"
+        url = f"{self.scheme}://{domain}/"
         resp = self.get(url, allow_redirects=True)
 
         if resp is None:
@@ -294,7 +294,7 @@ class XSLeaks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code in [301, 302, 303, 307, 308]:
@@ -326,7 +326,7 @@ class XSLeaks(TechniqueScanner):
 
             results = []
             for query, query_type in queries:
-                url = f"https://{domain}{endpoint}?q={query}"
+                url = f"{self.scheme}://{domain}{endpoint}?q={query}"
                 start = time.time()
                 resp = self.get(url, allow_redirects=True)
                 elapsed = time.time() - start
@@ -376,7 +376,7 @@ class XSLeaks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{resource}"
+            url = f"{self.scheme}://{domain}{resource}"
 
             # First request (cold cache)
             start1 = time.time()

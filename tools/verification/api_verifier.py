@@ -13,7 +13,11 @@ from . import BaseVerifier, VerificationResult, Severity, ConfidenceLevel
 
 class APIVerifier(BaseVerifier):
     """Verifies API endpoint exposure"""
-    
+
+    def verify(self, base_url: str) -> List[VerificationResult]:
+        """Verify API endpoints on a base URL (delegates to verify_api)."""
+        return self.verify_api(base_url)
+
     API_PATHS = [
         "/api",
         "/api/v1",

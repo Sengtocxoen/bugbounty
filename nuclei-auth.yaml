@@ -1,0 +1,23 @@
+# Nuclei Authentication Configuration — toolsforhumanity / Worldcoin
+# =====================================================================
+# Nuclei's own config file format. Loaded with: nuclei -config nuclei-auth.yaml
+#
+# This file is also picked up automatically by the scanner when
+# nuclei_config_file: "nuclei-auth.yaml" is set in scan_config.yaml.
+#
+# Nuclei docs: https://docs.projectdiscovery.io/tools/nuclei/running
+# =====================================================================
+
+# Headers sent with every request
+header:
+  - "X-HackerOne-Research: sengtocxoen"
+  # --- api.consumer.worldcoin.org authenticated testing ---
+  # After completing the Ethereum challenge-response auth flow, paste the
+  # accessToken below and uncomment:
+  #
+  #   Auth flow (from scan_config.yaml test_credentials):
+  #     1. POST /v1/graphql  →  requestChallengeV2(eoaAddress)  →  challenge
+  #     2. Sign challenge with private key via ethers.js wallet.signMessage()
+  #     3. POST /v1/graphql  →  solveChallengeV2(challenge, signature)  →  accessToken
+  #
+  # - "x-authorization: YOUR_ACCESS_TOKEN_HERE"

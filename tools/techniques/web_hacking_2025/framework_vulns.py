@@ -217,7 +217,7 @@ class FrameworkVulns(TechniqueScanner):
 
     def _detect_technology(self, domain: str) -> Dict:
         """Detect the technology stack used by the target"""
-        url = f"https://{domain}/"
+        url = f"{self.scheme}://{domain}/"
         resp = self.get(url, allow_redirects=True)
 
         if resp is None:
@@ -306,7 +306,7 @@ class FrameworkVulns(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{payload}"
+            url = f"{self.scheme}://{domain}{payload}"
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code == 200:
@@ -327,7 +327,7 @@ class FrameworkVulns(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
             resp = self.get(url, allow_redirects=False)
 
             if resp is None:
@@ -358,7 +358,7 @@ class FrameworkVulns(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code == 200:
@@ -391,7 +391,7 @@ class FrameworkVulns(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code == 200:
@@ -413,21 +413,21 @@ class FrameworkVulns(TechniqueScanner):
         baseline_texts = {}
 
         for path in verify_paths:
-            resp = self.get(f"https://{domain}{path}", allow_redirects=True)
+            resp = self.get(f"{self.scheme}://{domain}{path}", allow_redirects=True)
             baseline_texts[path] = resp.text if resp else ""
 
         for payload in pp_payloads:
             if is_shutdown():
                 break
 
-            url = f"https://{domain}/?{payload}"
+            url = f"{self.scheme}://{domain}/?{payload}"
             resp = self.get(url, allow_redirects=True)
 
             if resp and resp.status_code in [200, 201, 204]:
                 # Verify pollution propagates to a separate request
                 propagated = False
                 for path in verify_paths:
-                    verify_resp = self.get(f"https://{domain}{path}", allow_redirects=True)
+                    verify_resp = self.get(f"{self.scheme}://{domain}{path}", allow_redirects=True)
                     if verify_resp and pp_token in verify_resp.text and pp_token not in baseline_texts.get(path, ""):
                         propagated = True
                         break
@@ -449,7 +449,7 @@ class FrameworkVulns(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code == 200:

@@ -157,7 +157,7 @@ class AuthBypass(TechniqueScanner):
         }
 
         # Check well-known OpenID configuration
-        openid_url = f"https://{domain}/.well-known/openid-configuration"
+        openid_url = f"{self.scheme}://{domain}/.well-known/openid-configuration"
         resp = self.get(openid_url)
 
         if resp and resp.status_code == 200:
@@ -174,7 +174,7 @@ class AuthBypass(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code in [200, 302, 400, 401]:
@@ -194,7 +194,7 @@ class AuthBypass(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code in [200, 302, 400, 405]:
@@ -270,7 +270,7 @@ class AuthBypass(TechniqueScanner):
                 break
 
             # Get baseline response for protected path
-            baseline_url = f"https://{domain}{protected_path}"
+            baseline_url = f"{self.scheme}://{domain}{protected_path}"
             baseline = self.get(baseline_url, allow_redirects=False)
 
             if baseline is None:
@@ -287,7 +287,7 @@ class AuthBypass(TechniqueScanner):
             # Test path manipulations
             for original, bypass in self.PATH_BYPASS_PATTERNS:
                 bypass_path = bypass.replace("/admin", protected_path)
-                bypass_url = f"https://{domain}{bypass_path}"
+                bypass_url = f"{self.scheme}://{domain}{bypass_path}"
 
                 resp = self.get(bypass_url, allow_redirects=False)
                 if (resp and resp.status_code == 200 and resp.status_code != baseline_status and

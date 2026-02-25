@@ -285,7 +285,7 @@ class EnhancedHTTPClient:
         for attempt in range(max_retries):
             try:
                 response, redirect_chain = self.get_with_redirects(url, method=method, **kwargs)
-                if response:
+                if response is not None:
                     return response
             except Exception as e:
                 if attempt < max_retries - 1:

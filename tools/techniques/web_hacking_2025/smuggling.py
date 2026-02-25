@@ -290,7 +290,7 @@ class HTTPSmuggling(TechniqueScanner):
         """Test for HTTP/2 to HTTP/1.1 downgrade smuggling potential"""
         # Check if HTTP/2 is supported
         try:
-            resp = self.get(f"https://{domain}/", allow_redirects=False)
+            resp = self.get(f"{self.scheme}://{domain}/", allow_redirects=False)
             if resp is None:
                 return None
 

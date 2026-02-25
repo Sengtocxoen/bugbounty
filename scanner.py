@@ -440,6 +440,14 @@ def run_deep_mode(config: dict, targets: list, config_path: Path = None):
         custom_rate_limit=float(_get_rate_limit(config, 0)),
         custom_request_delay=float(_get_request_delay(config, 0)),
         custom_timeout=0,  # No timeouts
+        # Per-phase timeouts from config
+        phase_timeouts=config.get('phase_timeouts', {
+            'js_analysis': 300,
+            'param_fuzzing': 600,
+            'endpoint_discovery': 300,
+            'nuclei_scan': 600,
+            'verification': 300,
+        }),
         # Pass config file path for Nuclei and advanced features
         config_file=config_path,
     )
@@ -703,6 +711,134 @@ def run_parallel_mode(config: dict, targets: list):
 
 
 # =============================================================================
+# "ALL" MODE - Run multiple scanners in parallel
+# =============================================================================
+
+
+def _run_webhack2025(config: dict, targets: list, output_dir: Path):
+    """Run web_hacking_2025 scanner with config-derived settings."""
+    from techniques.web_hacking_2025.scanner import WebHackingScanner
+
+    rate_limit = float(_get_rate_limit(config, 5))
+    user_agent = _get_custom_headers(config).get(
+        'User-Agent', 'Mozilla/5.0 (compatible; SecurityResearch/1.0)'
+    )
+
+    adv = _get_advanced_features(config)
+    wh2025 = adv.get('web_hacking_2025', {}) if isinstance(adv, dict) else {}
+    techniques = None
+    techs = wh2025.get('techniques', {})
+    if techs:
+        techniques = [name for name, enabled in techs.items() if enabled]
+
+    sub_dir = output_dir / 'webhack2025'
+    sub_dir.mkdir(parents=True, exist_ok=True)
+
+    scanner = WebHackingScanner(
+        output_dir=sub_dir,
+        rate_limit=rate_limit,
+        user_agent=user_agent,
+        techniques=techniques,
+        verbose=True,
+        threads=3,
+    )
+    scanner.run(targets, resume=False)
+    safe_print("[+] webhack2025 scanner finished")
+
+
+def _run_vuln_v2(config: dict, targets: list, output_dir: Path):
+    """Run vuln_scanner_v2 with config-derived settings."""
+    from scanners.vuln_scanner_v2 import ScanConfig, run_scan
+
+    for target in targets:
+        # Parse target into host:port
+        if ':' in target:
+            parts = target.rsplit(':', 1)
+            host = parts[0]
+            try:
+                port = int(parts[1])
+            except ValueError:
+                host = target
+                port = 443
+        else:
+            host = target
+            port = 443
+
+        scheme = 'https' if port == 443 else 'http'
+        cfg = ScanConfig(host, target_port=port, scheme=scheme)
+
+        # Override results dir
+        sub_dir = output_dir / 'vuln_v2'
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        cfg.results_dir = sub_dir / f"scan_{host}_{port}"
+        cfg.results_dir.mkdir(parents=True, exist_ok=True)
+
+        cfg.request_delay = float(_get_request_delay(config, 0.2))
+        cfg.timeout = int(_get_request_timeout(config, 20))
+
+        run_scan(cfg)
+
+    safe_print("[+] vuln_v2 scanner finished")
+
+
+def run_all_mode(config: dict, targets: list, config_path: Path = None):
+    """Run multiple scanners in parallel and auto-aggregate results."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import sys as _sys
+
+    output_dir = _get_output_dir(config)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine which scanners to run
+    parallel_scanners = config.get('parallel_scanners', ['deep', 'webhack2025', 'vuln_v2'])
+
+    scanner_funcs = {
+        'deep': lambda: run_deep_mode(config, targets, config_path),
+        'webhack2025': lambda: _run_webhack2025(config, targets, output_dir),
+        'vuln_v2': lambda: _run_vuln_v2(config, targets, output_dir),
+    }
+
+    safe_print(f"[*] Running {len(parallel_scanners)} scanners in parallel: {', '.join(parallel_scanners)}")
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=len(parallel_scanners)) as executor:
+        futures = {}
+        for name in parallel_scanners:
+            func = scanner_funcs.get(name)
+            if func:
+                futures[executor.submit(func)] = name
+            else:
+                safe_print(f"[!] Unknown scanner: {name}, skipping")
+
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                future.result()
+                results[name] = "success"
+                safe_print(f"[+] {name} completed successfully")
+            except Exception as e:
+                results[name] = f"error: {e}"
+                safe_print(f"[!] {name} failed: {e}")
+                import traceback
+                traceback.print_exc()
+
+    # Auto-aggregate results
+    safe_print("\n[*] Auto-aggregating results from all scanners...")
+    try:
+        _sys.path.insert(0, str(Path(__file__).parent / 'tools'))
+        from aggregate_results import aggregate_results
+        aggregate_results(output_dir)
+    except Exception as e:
+        safe_print(f"[!] Aggregation error: {e}")
+        import traceback
+        traceback.print_exc()
+
+    safe_print("\n[+] All-mode scan complete!")
+    for name, status in results.items():
+        safe_print(f"    {name}: {status}")
+
+
+# =============================================================================
 # MODE DISPATCH
 # =============================================================================
 
@@ -715,6 +851,7 @@ MODE_RUNNERS = {
     'recon': run_recon_mode,
     'discover': run_discover_mode,
     'parallel': run_parallel_mode,
+    'all': run_all_mode,
 }
 
 
@@ -782,8 +919,8 @@ Override config path:
     # Run the selected scan mode
     try:
         runner = MODE_RUNNERS[mode]
-        # Pass config_path to deep mode for Nuclei and advanced features
-        if mode == 'deep':
+        # Pass config_path to modes that need it
+        if mode in ('deep', 'all'):
             runner(config, targets, config_path)
         else:
             runner(config, targets)

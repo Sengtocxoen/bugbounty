@@ -13,7 +13,11 @@ from . import BaseVerifier, VerificationResult, Severity, ConfidenceLevel
 
 class SSTIVerifier(BaseVerifier):
     """Verifies Server-Side Template Injection vulnerabilities"""
-    
+
+    def verify(self, url: str, parameter: Optional[str] = None) -> VerificationResult:
+        """Verify SSTI on a URL (delegates to verify_url)."""
+        return self.verify_url(url, parameter)
+
     # Template engine test payloads
     PAYLOADS = [
         # Flask/Jinja2

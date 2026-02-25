@@ -8,7 +8,7 @@ Helps filter out false positives from path brute-forcing.
 
 import requests
 from urllib.parse import urljoin, urlparse
-from typing import Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple
 from . import BaseVerifier, VerificationResult, Severity, ConfidenceLevel
 
 

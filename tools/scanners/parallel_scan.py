@@ -213,7 +213,8 @@ class ParallelVulnScanner:
                  output_dir: Path,
                  config: DeepScanConfig,
                  num_workers: int = 3,
-                 techniques: Optional[List[str]] = None):
+                 techniques: Optional[List[str]] = None,
+                 threads_per_subdomain: int = 3):
         self.queue = task_queue
         self.output_dir = output_dir
         self.config = config
@@ -230,6 +231,13 @@ class ParallelVulnScanner:
             program_config = get_program_config(config.program)
             self.rate_limit = program_config.rate_limit
             self.user_agent = program_config.get_user_agent(config.username)
+
+        # Cap threads per subdomain to stay within rate limits
+        if num_workers > 0 and self.rate_limit > 0:
+            max_threads = max(1, int(self.rate_limit / num_workers))
+            self.threads_per_subdomain = min(threads_per_subdomain, max_threads)
+        else:
+            self.threads_per_subdomain = threads_per_subdomain
 
     def _scan_subdomain(self, task: SubdomainTask) -> ScanResult:
         """Scan a single subdomain"""
@@ -251,7 +259,7 @@ class ParallelVulnScanner:
                 user_agent=self.user_agent,
                 techniques=self.techniques,
                 verbose=False,  # Reduce noise in parallel mode
-                threads=1,  # Single thread per subdomain to avoid overwhelming
+                threads=self.threads_per_subdomain,
             )
 
             # Run the scan

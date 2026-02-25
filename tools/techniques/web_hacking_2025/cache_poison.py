@@ -111,7 +111,7 @@ class CachePoisoning(TechniqueScanner):
 
     def _check_caching(self, domain: str, path: str = "/") -> Optional[CacheTestResult]:
         """Check if a URL is being cached"""
-        url = f"https://{domain}{path}"
+        url = f"{self.scheme}://{domain}{path}"
 
         # Add cache buster to avoid poisoning real cache
         buster = f"?cb={self._generate_canary()}"
@@ -176,7 +176,7 @@ class CachePoisoning(TechniqueScanner):
         findings = []
         canary = self._generate_canary()
         cache_buster = f"?unkh={canary}"
-        url = f"https://{domain}{path}{cache_buster}"
+        url = f"{self.scheme}://{domain}{path}{cache_buster}"
 
         for header_name, header_value in self.UNKEYED_HEADERS:
             if is_shutdown():
@@ -231,7 +231,7 @@ class CachePoisoning(TechniqueScanner):
             for ext in self.STATIC_EXTENSIONS[:3]:  # Test with first few extensions
                 # Create path with static extension
                 deception_path = f"{base_path}/anything{canary}{ext}"
-                url = f"https://{domain}{deception_path}"
+                url = f"{self.scheme}://{domain}{deception_path}"
 
                 resp = self.get(url, allow_redirects=True)
                 if resp is None:
@@ -273,7 +273,7 @@ class CachePoisoning(TechniqueScanner):
                 break
 
             # Get baseline response
-            baseline_url = f"https://{domain}{base_path}"
+            baseline_url = f"{self.scheme}://{domain}{base_path}"
             baseline = self.get(baseline_url)
             if baseline is None:
                 continue
@@ -287,7 +287,7 @@ class CachePoisoning(TechniqueScanner):
             for norm_name, norm_char in self.PATH_NORMALIZATION:
                 # Test if normalization bypasses caching
                 test_path = f"/{norm_char}{base_path.lstrip('/')}"
-                test_url = f"https://{domain}{test_path}"
+                test_url = f"{self.scheme}://{domain}{test_path}"
 
                 test_resp = self.get(test_url)
                 if test_resp is None:
@@ -319,7 +319,7 @@ class CachePoisoning(TechniqueScanner):
 
     def _test_stale_while_revalidate(self, domain: str) -> Optional[Dict]:
         """Test for stale-while-revalidate exploitation"""
-        url = f"https://{domain}/"
+        url = f"{self.scheme}://{domain}/"
         resp = self.get(url)
 
         if resp is None:
@@ -344,7 +344,7 @@ class CachePoisoning(TechniqueScanner):
     def _test_vary_header_bypass(self, domain: str) -> List[Dict]:
         """Test for Vary header bypass opportunities"""
         findings = []
-        url = f"https://{domain}/"
+        url = f"{self.scheme}://{domain}/"
 
         resp = self.get(url)
         if resp is None:

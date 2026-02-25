@@ -257,7 +257,7 @@ class SSRFDetection(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{path}"
+            url = f"{self.scheme}://{domain}{path}"
 
             # Test GET with URL parameter
             for param in self.SSRF_PARAMS[:5]:

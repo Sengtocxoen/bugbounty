@@ -208,7 +208,7 @@ class BaseScanner:
 
         if base_key not in self.baselines:
             response = self.get(base_key)
-            if response:
+            if response is not None:
                 content = response.text or ""
                 self.baselines[base_key] = {
                     'hash': hashlib.md5(content.encode()).hexdigest(),

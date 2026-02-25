@@ -93,9 +93,9 @@ class CrossSiteAttacks(TechniqueScanner):
 
         # Common pages with parameters
         test_urls = [
-            f"https://{domain}/",
-            f"https://{domain}/search",
-            f"https://{domain}/api/search",
+            f"{self.scheme}://{domain}/",
+            f"{self.scheme}://{domain}/search",
+            f"{self.scheme}://{domain}/api/search",
         ]
 
         # Common parameter names
@@ -223,11 +223,11 @@ class CrossSiteAttacks(TechniqueScanner):
 
         # Find forms on the target
         test_pages = [
-            f"https://{domain}/",
-            f"https://{domain}/login",
-            f"https://{domain}/register",
-            f"https://{domain}/settings",
-            f"https://{domain}/account",
+            f"{self.scheme}://{domain}/",
+            f"{self.scheme}://{domain}/login",
+            f"{self.scheme}://{domain}/register",
+            f"{self.scheme}://{domain}/settings",
+            f"{self.scheme}://{domain}/account",
         ]
 
         for page_url in test_pages:
@@ -272,7 +272,7 @@ class CrossSiteAttacks(TechniqueScanner):
 
     def _test_clickjacking(self, domain: str) -> Dict:
         """Test clickjacking protection"""
-        url = f"https://{domain}/"
+        url = f"{self.scheme}://{domain}/"
         resp = self.get(url, allow_redirects=True)
 
         if resp is None:
@@ -309,17 +309,17 @@ class CrossSiteAttacks(TechniqueScanner):
 
         test_origins = [
             "https://evil.com",
-            f"https://{domain}.evil.com",
+            f"{self.scheme}://{domain}.evil.com",
             f"https://evil{domain}",
             "null",
-            f"https://{domain}",  # Same origin baseline
+            f"{self.scheme}://{domain}",  # Same origin baseline
         ]
 
         api_endpoints = [
-            f"https://{domain}/",
-            f"https://{domain}/api/",
-            f"https://{domain}/api/user",
-            f"https://{domain}/api/v1/",
+            f"{self.scheme}://{domain}/",
+            f"{self.scheme}://{domain}/api/",
+            f"{self.scheme}://{domain}/api/user",
+            f"{self.scheme}://{domain}/api/v1/",
         ]
 
         for endpoint in api_endpoints:
@@ -338,7 +338,7 @@ class CrossSiteAttacks(TechniqueScanner):
 
                 if acao:
                     # Dangerous: reflects arbitrary origin with credentials
-                    if acao == origin and origin not in [f"https://{domain}", "null"] and acac.lower() == 'true':
+                    if acao == origin and origin not in [f"{self.scheme}://{domain}", "null"] and acac.lower() == 'true':
                         findings.append({
                             "endpoint": endpoint,
                             "origin_tested": origin,
@@ -383,7 +383,7 @@ class CrossSiteAttacks(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # Test if GraphQL endpoint exists
             resp = self.post(url,
@@ -439,7 +439,7 @@ class CrossSiteAttacks(TechniqueScanner):
             if not location:
                 return False
             try:
-                resolved = urljoin(f"https://{domain}/", location)
+                resolved = urljoin(f"{self.scheme}://{domain}/", location)
                 parsed = urlparse(resolved)
                 if not parsed.netloc:
                     return False
@@ -457,7 +457,7 @@ class CrossSiteAttacks(TechniqueScanner):
                     if is_shutdown():
                         break
 
-                    test_url = f"https://{domain}{base_path}?{param}={quote(evil_url)}"
+                    test_url = f"{self.scheme}://{domain}{base_path}?{param}={quote(evil_url)}"
                     resp = self.get(test_url, allow_redirects=False)
 
                     if resp is None:
@@ -577,7 +577,7 @@ class CrossSiteAttacks(TechniqueScanner):
                     ],
                     response_obj=clickjack.get("response_obj"),
                     sub_technique="clickjacking",
-                    endpoint=f"https://{domain}/",
+                    endpoint=f"{self.scheme}://{domain}/",
                     http_method="GET"
                 )
                 findings.append(finding)

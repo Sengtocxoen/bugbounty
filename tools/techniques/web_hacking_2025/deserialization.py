@@ -162,7 +162,7 @@ class Deserialization(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # Test POST with serialized data
             headers = {

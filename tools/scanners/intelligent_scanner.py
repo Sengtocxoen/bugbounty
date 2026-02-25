@@ -11,6 +11,7 @@ Strategy:
 5. Come back and deep scan later
 """
 
+import sys
 import time
 import requests
 from pathlib import Path
@@ -18,6 +19,9 @@ from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import logging
+
+# Ensure tools directory is on the path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analysis.smart_response_detector import (
     SmartResponseDetector,

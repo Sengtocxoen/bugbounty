@@ -7,14 +7,27 @@ Checks if services are accessible and if authentication is required.
 """
 
 import socket
-import struct
-from typing import Optional, Tuple
+from typing import Optional
 from . import BaseVerifier, VerificationResult, Severity, ConfidenceLevel
 
 
 class ServiceVerifier(BaseVerifier):
     """Verifies exposed network services"""
-    
+
+    def verify(self, host: str, port: int = 0, service: str = "") -> VerificationResult:
+        """Verify a service on a given host/port (dispatches to specific verifier)."""
+        if port:
+            return self.verify_port(host, port, service)
+        return VerificationResult(
+            verified=False,
+            confidence=ConfidenceLevel.UNVERIFIED,
+            severity=Severity.INFO,
+            finding_type="no_port",
+            target=host,
+            details="No port specified for service verification",
+            proof={},
+        )
+
     def verify_redis(self, host: str, port: int = 6379) -> VerificationResult:
         """
         Verify Redis service exposure

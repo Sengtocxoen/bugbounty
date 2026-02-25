@@ -177,13 +177,17 @@ PARAM_PATTERNS = [
 class JSAnalyzer:
     """Analyze JavaScript files for security issues"""
 
-    def __init__(self, rate_limit: float = 5.0, user_agent: str = "BugBountyResearcher", validate_secrets: bool = False):
+    def __init__(self, rate_limit: float = 5.0, user_agent: str = "BugBountyResearcher",
+                 validate_secrets: bool = False, max_js_files: int = 0,
+                 max_file_size: int = 1_048_576):
         self.rate_limit = rate_limit
         self.min_interval = 1.0 / rate_limit
         self.last_request = 0.0
         self.lock = threading.Lock()
         self.user_agent = user_agent
         self.validate_secrets = validate_secrets
+        self.max_js_files = max_js_files  # 0 = unlimited
+        self.max_file_size = max_file_size  # 1 MB default
         self.session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
@@ -205,13 +209,34 @@ class JSAnalyzer:
             self.last_request = time.time()
 
     def _fetch_js(self, url: str) -> Optional[str]:
-        """Fetch JavaScript file content"""
+        """Fetch JavaScript file content with size cap to avoid hanging on large bundles"""
         self._rate_limit_wait()
         try:
-            response = self.session.get(url, timeout=15)
-            if response.status_code == 200:
-                return response.text
-        except:
+            response = self.session.get(url, timeout=15, stream=True)
+            if response.status_code != 200:
+                return None
+
+            # Check Content-Length header first
+            content_length = response.headers.get('Content-Length')
+            if content_length and int(content_length) > self.max_file_size:
+                print(f"      [SKIP] {url.split('/')[-1].split('?')[0]} too large ({int(content_length)//1024}KB > {self.max_file_size//1024}KB)")
+                response.close()
+                return None
+
+            # Stream in chunks with size cap
+            chunks = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=65536, decode_unicode=True):
+                if chunk:
+                    total += len(chunk.encode('utf-8') if isinstance(chunk, str) else chunk)
+                    if total > self.max_file_size:
+                        print(f"      [SKIP] {url.split('/')[-1].split('?')[0]} exceeded size limit during download ({total//1024}KB)")
+                        response.close()
+                        return None
+                    chunks.append(chunk if isinstance(chunk, str) else chunk.decode('utf-8', errors='replace'))
+
+            return ''.join(chunks)
+        except Exception:
             pass
         return None
 
@@ -364,30 +389,40 @@ class JSAnalyzer:
              pass
         return endpoint
 
-    def recursive_analyze(self, url: str, depth: int = 1, max_depth: int = 2) -> JSAnalysisResult:
+    def recursive_analyze(self, url: str, depth: int = 1, max_depth: int = 2,
+                          max_total_files: int = 50, _files_analyzed: int = 0) -> JSAnalysisResult:
         """Recursive analysis of JavaScript files"""
         result = self.analyze_url(url)
+        _files_analyzed += len(result.js_files)
         result.recursive_depth = depth
-        
+
         if depth >= max_depth:
             return result
-            
+
+        if max_total_files > 0 and _files_analyzed >= max_total_files:
+            print(f"    [LIMIT] Reached max total files ({max_total_files}), stopping recursion")
+            return result
+
         print(f"    [RECURSIVE] Starting depth {depth + 1} analysis...")
-        
+
         # Discover new JS files from found endpoints
         new_js_urls = self.discover_js_from_endpoints(result.api_endpoints)
-        
+
         for js_url in new_js_urls:
+            if max_total_files > 0 and _files_analyzed >= max_total_files:
+                print(f"    [LIMIT] Reached max total files ({max_total_files}), stopping recursion")
+                break
             if js_url not in result.js_files:
                 print(f"      [RECURSIVE] Analyzing new JS file: {js_url}")
                 content = self._fetch_js(js_url)
                 if content:
+                    _files_analyzed += 1
                     result.js_files.append(js_url)
                     result.secrets.extend(self.find_secrets(content, js_url))
                     result.api_endpoints.extend(self.find_api_endpoints(content, url, js_url))
                     result.dom_sinks.extend(self.find_dom_sinks(content, js_url))
                     result.parameters.update(self.find_parameters(content))
-        
+
         return result
 
     def discover_js_from_endpoints(self, endpoints: List[ApiEndpoint]) -> Set[str]:
@@ -444,6 +479,19 @@ class JSAnalyzer:
 
         # Also analyze inline scripts
         inline_scripts = re.findall(r'<script[^>]*>(.*?)</script>', response.text, re.DOTALL | re.IGNORECASE)
+
+        # Cap number of JS files if configured
+        if self.max_js_files > 0 and len(js_urls) > self.max_js_files:
+            # Sort URLs to prioritize smaller files (skip likely bundles by name heuristic)
+            def _bundle_score(u):
+                name = u.split('/')[-1].lower()
+                # Likely large bundles get higher score (sorted last, then trimmed)
+                if any(kw in name for kw in ['bundle', 'vendor', 'polyfill', 'chunk', 'main.', 'app.']):
+                    return 1
+                return 0
+            sorted_urls = sorted(js_urls, key=_bundle_score)
+            js_urls = set(sorted_urls[:self.max_js_files])
+            print(f"    [LIMIT] Capped JS files from {len(sorted_urls)} to {self.max_js_files} (skipping likely bundles)")
 
         result.js_files = list(js_urls)
         print(f"    [FOUND] {len(js_urls)} external JS files, {len(inline_scripts)} inline scripts")

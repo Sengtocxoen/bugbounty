@@ -395,17 +395,21 @@ class TechniqueScanner(ABC):
                  rate_limit: float = 5.0,
                  user_agent: str = "Mozilla/5.0 (compatible; SecurityResearch/1.0)",
                  timeout: int = 30,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 scheme: str = "https"):
         self.rate_limiter = RateLimiter(rate_limit)
         self.user_agent = user_agent
         self.timeout = timeout
         self.verbose = verbose
+        self.scheme = scheme
         self.session = self._create_session()
         self._shutdown = False
         self._last_response: Optional[requests.Response] = None
 
     def _create_session(self) -> requests.Session:
         """Create a session with retry logic"""
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         session = requests.Session()
         retry_strategy = Retry(
             total=3,
@@ -423,6 +427,29 @@ class TechniqueScanner(ABC):
         })
         return session
 
+    def build_url(self, domain: str, path: str = "/") -> str:
+        """Build URL for domain, auto-detecting http vs https.
+        Caches the scheme per domain for efficiency."""
+        if not hasattr(self, '_scheme_cache'):
+            self._scheme_cache = {}
+        # If domain already has a scheme, use it
+        if domain.startswith('http://') or domain.startswith('https://'):
+            return f"{domain.rstrip('/')}{path}"
+        if domain in self._scheme_cache:
+            return f"{self._scheme_cache[domain]}://{domain}{path}"
+        # Probe http first (handles non-TLS targets like Juice Shop)
+        for scheme in ['http', 'https']:
+            try:
+                resp = self.session.head(f"{scheme}://{domain}/",
+                                         timeout=5, verify=False, allow_redirects=True)
+                if resp.status_code < 500:
+                    self._scheme_cache[domain] = scheme
+                    return f"{scheme}://{domain}{path}"
+            except Exception:
+                continue
+        self._scheme_cache[domain] = 'http'
+        return f"http://{domain}{path}"
+
     def request(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
         """Make a rate-limited request"""
         if self._shutdown:
@@ -431,7 +458,7 @@ class TechniqueScanner(ABC):
         self.rate_limiter.wait()
         try:
             kwargs.setdefault('timeout', self.timeout)
-            kwargs.setdefault('verify', True)
+            kwargs.setdefault('verify', False)
             kwargs.setdefault('allow_redirects', False)
             response = self.session.request(method, url, **kwargs)
             self._last_response = response

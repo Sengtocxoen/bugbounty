@@ -523,7 +523,7 @@ class EnhancedSubdomainScanner:
             try:
                 url = f"{scheme}://{subdomain}"
                 response = self._safe_request(url, allow_redirects=True)
-                if response:
+                if response is not None:
                     result['is_alive'] = True
                     if scheme == 'https':
                         result['https_status'] = response.status_code

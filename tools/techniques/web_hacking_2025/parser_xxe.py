@@ -172,7 +172,7 @@ class ParserXXE(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # Test with XML content type
             xml_data = '<?xml version="1.0"?><test>data</test>'
@@ -267,7 +267,7 @@ class ParserXXE(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
             json_data = '{"test": "data"}'
 
             resp = self.post(url,
@@ -299,7 +299,7 @@ class ParserXXE(TechniqueScanner):
                     break
 
                 for test_url, vuln_type in self.URL_PARSER_TESTS:
-                    test_full = f"https://{domain}{base_path}?{param}={quote(test_url, safe='')}"
+                    test_full = f"{self.scheme}://{domain}{base_path}?{param}={quote(test_url, safe='')}"
 
                     resp = self.get(test_full, allow_redirects=False)
                     if resp is None:
@@ -362,7 +362,7 @@ class ParserXXE(TechniqueScanner):
                 break
 
             for pattern, pattern_type in traversal_patterns:
-                url = f"https://{domain}{endpoint}{quote(pattern)}"
+                url = f"{self.scheme}://{domain}{endpoint}{quote(pattern)}"
 
                 resp = self.get(url)
                 if resp is None:

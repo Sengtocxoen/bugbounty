@@ -314,6 +314,17 @@ class NucleiScanner:
         if custom_templates and Path(custom_templates).exists():
             cmd.extend(['-templates', custom_templates])
         
+        # Custom headers (-H "Name: Value") — read from config custom_headers
+        custom_headers = self.config.get('custom_headers', {})
+        for name, value in custom_headers.items():
+            if value:
+                cmd.extend(['-H', f'{name}: {value}'])
+
+        # Nuclei native config file (-config path) — for advanced auth/headers
+        nuclei_config_file = self.config.get('nuclei_config_file')
+        if nuclei_config_file and Path(nuclei_config_file).exists():
+            cmd.extend(['-config', nuclei_config_file])
+
         # Rate limiting (requests per minute -> delay in seconds)
         rate_limit = self.config.get('rate_limit', 150)
         if rate_limit > 0:
@@ -573,62 +584,107 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Nuclei Scanner for Bug Bounty Workflows')
-    parser.add_argument('--scan-file', help='Path to deep_scan_*.json file')
+    parser.add_argument('--scan-file', help='Path to deep_scan_*.json file from a previous run')
     parser.add_argument('--targets', nargs='+', help='Direct target URLs to scan')
-    parser.add_argument('--config', help='Path to scan_config.yaml')
+    parser.add_argument('--program-targets', action='store_true',
+                        help='Use the targets list defined in scan_config.yaml')
+    parser.add_argument('--config', default='scan_config.yaml', help='Path to scan_config.yaml')
     parser.add_argument('--output', default='./nuclei_results', help='Output directory')
-    parser.add_argument('--severity', nargs='+', default=['critical', 'high', 'medium'],
-                       help='Severity levels to scan')
+    parser.add_argument('--severity', nargs='+', help='Severity levels (default: from config)')
     parser.add_argument('--tags', nargs='+', help='Tags to include')
-    parser.add_argument('--exclude-tags', nargs='+', default=['dos'], help='Tags to exclude')
-    
+    parser.add_argument('--exclude-tags', nargs='+', help='Tags to exclude (default: from config)')
+    parser.add_argument('-H', '--header', action='append', dest='headers',
+                        metavar='NAME: VALUE',
+                        help='Extra header sent with every request (repeatable). '
+                             'e.g. -H "x-authorization: TOKEN"')
+    parser.add_argument('--nuclei-config', metavar='FILE',
+                        help='Path to a Nuclei config file (nuclei -config FILE). '
+                             'Overrides nuclei_config_file in scan_config.yaml')
+
     args = parser.parse_args()
-    
-    # Load config
-    config = None
-    if args.config:
-        config_path = Path(args.config)
-        if config_path.exists():
-            with open(config_path) as f:
-                full_config = yaml.safe_load(f)
-                config = full_config.get('nuclei_scan', {})
-    
-    # Override with CLI args
-    if not config:
-        config = {}
-    
+
+    # Load config from YAML
+    config = {}
+    full_yaml = {}
+    config_path = Path(args.config)
+    if config_path.exists():
+        with open(config_path) as f:
+            full_yaml = yaml.safe_load(f) or {}
+            config = full_yaml.get('nuclei_scan', {})
+    else:
+        print(f"Warning: config file not found: {args.config}")
+
+    # CLI overrides
     if args.severity:
         config['severity'] = args.severity
     if args.tags:
         config['tags'] = args.tags
     if args.exclude_tags:
         config['exclude_tags'] = args.exclude_tags
-    
+    if args.nuclei_config:
+        config['nuclei_config_file'] = args.nuclei_config
+
+    # Merge extra headers from CLI (-H flags) into config custom_headers
+    if args.headers:
+        extra = {}
+        for h in args.headers:
+            if ': ' in h:
+                k, v = h.split(': ', 1)
+                extra[k.strip()] = v.strip()
+            elif ':' in h:
+                k, v = h.split(':', 1)
+                extra[k.strip()] = v.strip()
+        merged = dict(config.get('custom_headers', {}))
+        merged.update(extra)
+        config['custom_headers'] = merged
+
     # Initialize scanner
     scanner = NucleiScanner(config=config, output_dir=Path(args.output))
-    
-    # Get targets
+
+    # Resolve targets
     targets = []
+    target_name = 'manual_scan'
+
     if args.scan_file:
         targets = scanner.load_targets_from_scan_results(Path(args.scan_file))
-        target_name = Path(args.scan_file).parent.name
+        target_name = Path(args.scan_file).stem
+    elif args.program_targets:
+        raw = full_yaml.get('targets', [])
+        targets = [f"https://{t}" if not t.startswith('http') else t for t in raw]
+        target_name = full_yaml.get('program', 'program_scan')
+        print(f"Loaded {len(targets)} targets from {args.config}")
     elif args.targets:
         targets = args.targets
-        target_name = 'manual_scan'
     else:
-        print("Error: Must provide either --scan-file or --targets")
+        print("Error: supply --targets URL [URL...], --program-targets, or --scan-file FILE")
         return 1
-    
+
     if not targets:
         print("No targets found to scan")
         return 1
-    
+
+    print(f"\nTargets ({len(targets)}):")
+    for t in targets:
+        print(f"  {t}")
+    headers_cfg = config.get('custom_headers', {})
+    if headers_cfg:
+        print(f"\nCustom headers: {list(headers_cfg.keys())}")
+    nuclei_cfg = config.get('nuclei_config_file')
+    if nuclei_cfg:
+        print(f"Nuclei config file: {nuclei_cfg}")
+    print()
+
     # Run scan
     results = scanner.scan_targets(targets, target_name)
-    
-    print(f"\n✓ Scan complete! Results saved to: {args.output}")
-    print(f"  Findings: {len(results.get('findings', []))}")
-    
+
+    findings = results.get('findings', [])
+    summary = results.get('by_severity', results.get('summary', {}).get('by_severity', {}))
+    print(f"\n✓ Scan complete! Results saved to: {args.output}/{target_name}")
+    print(f"  Total findings : {len(findings)}")
+    if summary:
+        print(f"  Critical: {summary.get('critical', 0)}  High: {summary.get('high', 0)}"
+              f"  Medium: {summary.get('medium', 0)}  Low: {summary.get('low', 0)}")
+
     return 0
 
 

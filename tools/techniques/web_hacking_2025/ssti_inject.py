@@ -372,12 +372,12 @@ class SSTIInjection(TechniqueScanner):
 
             for param in params:
                 canary = self._generate_canary()
-                url = f"https://{domain}{endpoint}?{param}={canary}"
+                url = f"{self.scheme}://{domain}{endpoint}?{param}={canary}"
 
                 resp = self._follow_same_domain("GET", url, domain, self.get)
                 if resp and canary in resp.text:
                     injectable.append({
-                        "url": f"https://{domain}{endpoint}",
+                        "url": f"{self.scheme}://{domain}{endpoint}",
                         "parameter": param,
                         "method": "GET",
                         "reflected": True
@@ -386,14 +386,14 @@ class SSTIInjection(TechniqueScanner):
                 # Also test POST
                 resp_post = self._follow_same_domain(
                     "POST",
-                    f"https://{domain}{endpoint}",
+                    f"{self.scheme}://{domain}{endpoint}",
                     domain,
                     self.post,
                     data={param: canary}
                 )
                 if resp_post and canary in resp_post.text:
                     injectable.append({
-                        "url": f"https://{domain}{endpoint}",
+                        "url": f"{self.scheme}://{domain}{endpoint}",
                         "parameter": param,
                         "method": "POST",
                         "reflected": True
@@ -733,7 +733,7 @@ class SSTIInjection(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
             resp = self.get(url, allow_redirects=False)
 
             if resp and resp.status_code in [200, 400, 405]:
@@ -818,7 +818,7 @@ class SSTIInjection(TechniqueScanner):
             if is_shutdown():
                 break
 
-            url = f"https://{domain}{endpoint}"
+            url = f"{self.scheme}://{domain}{endpoint}"
 
             # First, get a baseline response WITHOUT our payload
             baseline_resp = self.get(url, headers={"Content-Type": "application/json"})
@@ -853,7 +853,7 @@ class SSTIInjection(TechniqueScanner):
 
                             # To confirm real pollution, make a SEPARATE request
                             # and check if the polluted property persists/propagates
-                            verify_resp = self.get(f"https://{domain}/api/user/profile",
+                            verify_resp = self.get(f"{self.scheme}://{domain}/api/user/profile",
                                                   headers={"Content-Type": "application/json"})
                             verify_resp2 = self.get(url,
                                                    headers={"Content-Type": "application/json"})

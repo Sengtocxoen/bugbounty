@@ -1,119 +1,185 @@
-# Bug Bounty Scanner - Example Configuration
-# Copy this file and customize for your scans
-
-# =============================================================================
-# SCAN MODE - Which tool to use
-# =============================================================================
-
-# Options: deep, fullrecon, intelligent, continuous, recon, discover, parallel
-# Leave commented out to be prompted interactively
-# scan_mode: "deep"
+# Bug Bounty Scanner - Tools For Humanity (TFH) / Worldcoin Configuration
+# HackerOne Program: toolsforhumanity
+# Generated: 2026-02-23
+# Source: Overview.md & scopes_for_toolsforhumanity_at_2026-02-23_13_41_53_UTC.csv
 
 # =============================================================================
 # PROGRAM & USER INFO
 # =============================================================================
 
-# Program name: "amazon", "shopify", "anduril", or null for generic
-program: amazon
+program: "toolsforhumanity"
 
-# Your HackerOne username (required for some programs)
+# Your HackerOne username
 h1_username: "sengtocxoen"
 
 # =============================================================================
 # TARGETS
+# Organized by priority (Primary > Secondary) from scope CSV
+# All targets have eligible_for_bounty = true
 # =============================================================================
 
-# List your target domains here
 targets:
-  - "amazon.com"
-  # - "app.example.com"
-  # - "api.example.com"
+  # ---- PRIMARY ASSETS (max_severity: critical, high availability/integrity) ----
+
+  # WorldID OIDC Provider (identity platform - highest value target)
+  - "id.worldcoin.org"
+
+  # Developer Portal (API keys, app management)
+  - "developer.worldcoin.org"
+
+  # ---- SECONDARY ASSETS - TFH-Owned ----
+
+  # World App backend (GraphQL API, crypto wallet ops)
+  - "api.consumer.worldcoin.org"
+
+  # TFH corporate website
+  - "toolsforhumanity.com"
+
+  # ---- SECONDARY ASSETS - Worldcoin Foundation-Owned ----
+
+  # Main Worldcoin website
+  - "worldcoin.org"
+
+  # World protocol website
+  - "world.org"
+
+  # Redirect / marketing page
+  - "getworldcoin.com"
+
+# NOTE: Wildcard assets (*.worldcoin.org, *.consumer.worldcoin.org,
+# *.toolsforhumanity.com, *.worldcoin-distributors.com, *.worldcoin.dev)
+# are expanded via subdomain discovery below.
 
 # =============================================================================
 # CUSTOM HEADERS
 # =============================================================================
 
-# Add any required HTTP headers
-custom_headers: {}
-  # X-HackerOne-Research: "your_username"  # Anduril requires this
-  # X-Bug-Bounty: "researcher"
+# No program-specific required headers documented.
+# Using standard HackerOne researcher identification.
+custom_headers:
+  X-HackerOne-Research: "sengtocxoen"
 
 # =============================================================================
 # RATE LIMITING
 # =============================================================================
 
-# Amazon VRP requires MAX 5 requests/second - we use 4.5 for safety margin
-rate_limit: 4.5             # Requests per second (CRITICAL: max 5 req/s)
-request_delay: 0.22         # 220ms delay between requests
-request_timeout: 30         # Request timeout (seconds)
+# TFH prohibits: DoS attacks, disruption of service. Keep rate limits moderate.
+# World Chain DoS IS in scope (unlike most DoS) — still keep rate limits safe.
+rate_limit: 10              # Requests per second
+request_delay: 0.1          # 100ms extra delay between requests
+request_timeout: 120        # Request timeout in seconds (2 min - generous for slow targets)
 
 # =============================================================================
 # SCAN PHASES
 # =============================================================================
 
 phases:
-  subdomain_discovery: true    # Find subdomains
-  port_scanning: true          # Scan ports
-  endpoint_discovery: true     # Find endpoints
-  tech_detection: true         # Detect technologies
-  js_analysis: true            # Analyze JavaScript
-  param_fuzzing: true          # Test for vulnerabilities
-  verification: true           # Verify findings
+  # Wildcard scopes (*.worldcoin.org, *.consumer.worldcoin.org, etc.)
+  # make subdomain discovery HIGH VALUE here
+  subdomain_discovery: true
+
+  # Port scanning — useful for finding exposed services
+  # TFH does NOT list "open ports without vuln" as out-of-scope (unlike Basecamp)
+  port_scanning: true
+
+  # Endpoint discovery — GraphQL, REST APIs, developer endpoints
+  endpoint_discovery: true
+
+  # Tech detection — identify stack for targeted attack selection
+  tech_detection: true
+
+  # JS analysis — World App is heavily JS-driven; source maps, secrets
+  js_analysis: true
+
+  # Parameter fuzzing — GraphQL mutations, REST params
+  param_fuzzing: true
+
+  # Vulnerability scanning — auth, OIDC, CORS, SSRF, etc.
+  vulnerability_scanning: true
+
+  # Verification — confirm and chain findings
+  verification: true
 
 # =============================================================================
-# ADVANCED FEATURES (NEW!)
+# ADVANCED FEATURES
 # =============================================================================
 
 advanced_features:
-  # Response Deduplication - Skip similar pages (60% faster scans)
   response_dedup:
     enabled: true
-    similarity_threshold: 0.85   # 85% similarity = duplicate (0.0-1.0)
-  
-  # Secret Validation - Verify credentials are active (90% less false positives)  
+    similarity_threshold: 0.85
+
   secret_validation:
     enabled: true
-    validate_aws: true           # Test AWS keys via STS
-    validate_firebase: true      # Test Firebase URLs
-    validate_github: true        # Test GitHub tokens
-    validate_google: true        # Test Google API keys
-    validate_slack: true         # Test Slack tokens
-  
-  # GitHub/GitLab Dorking - Search repos for leaks
+    validate_aws: true        # World infrastructure may use AWS
+    validate_firebase: true
+    validate_github: true     # TFH has github.com/worldcoin in scope
+    validate_google: true
+    validate_slack: true
+
   github_dorking:
-    enabled: false               # Enable to search public repos
-    github_token: null           # Optional: GitHub PAT for higher rate limits
-    gitlab_token: null           # Optional: GitLab token
-    max_results: 50
-  
-  # GraphQL Introspection - Map GraphQL schemas
+    enabled: true             # github.com/worldcoin is EXPLICITLY in scope
+    github_token: null        # Add token for higher rate limits
+    gitlab_token: null
+    max_results: 100
+    # Focus on worldcoin org repos
+    target_orgs:
+      - "worldcoin"
+    # What to search for
+    search_passwords: true
+    search_api_keys: true
+    search_tokens: true
+    search_internal_urls: true
+    search_env_files: true
+
+  # GraphQL is the PRIMARY API interface for *.consumer.worldcoin.org
   graphql:
     enabled: true
-    auto_detect: true            # Auto-detect GraphQL endpoints
-    introspect_authenticated: false  # Try introspection with auth headers
-  
-  # Advanced Fuzzing - Recursive directory discovery
+    auto_detect: true
+    introspect_authenticated: true    # Test introspection with test credentials
+    # Test endpoints
+    known_endpoints:
+      - "https://api.consumer.worldcoin.org/v1/graphql"
+    # GraphQL-specific attacks
+    test_batch_queries: true          # Batch query abuse
+    test_field_suggestions: true      # Info disclosure via field suggestions
+    test_alias_overloading: true      # DoS via alias overloading
+    test_deep_recursion: true         # Recursive query attacks
+
   fuzzing:
-    recursive: true              # Recurse into found directories
-    max_depth: 3                 # Max recursion depth
-    header_fuzz: true            # Try header injection bypasses
-    soft_404_detection: true     # Smart soft-404 filtering
+    recursive: true
+    max_depth: 3
+    header_fuzz: true
+    soft_404_detection: true
     wordlist: "wordlists/common.txt"
-  
-  # Vulnerability Chaining - Auto-escalate severity
+
   vuln_chaining:
     enabled: true
-    auto_escalate: true          # Auto-trigger deep scans on findings
-    chain_ssrf_idor: true        # Chain SSRF + IDOR
-    chain_xss_csrf: true         # Chain XSS + CSRF
-    chain_lfi_rce: true          # Chain LFI + RCE
-  
-  # Enhanced WAF Evasion
+    auto_escalate: true
+    # High-value chains for this target
+    chain_ssrf_idor: true             # SSRF + cloud metadata = critical
+    chain_xss_csrf: true             # XSS + CSRF on OIDC = ATO
+    chain_lfi_rce: true
+    chain_open_redirect_oauth: true   # Open redirect + OIDC = ATO
+
   waf_evasion:
-    proxy_rotation: false        # Enable proxy rotation
-    proxy_list: []               # List of proxy URLs
-    tamper_payloads: true        # SQLMap-style tampering
-    adaptive_delay: true         # Auto-adjust on rate limits
+    proxy_rotation: false
+    proxy_list: []
+    tamper_payloads: true
+    adaptive_delay: true
+    encoding_bypass: true
+
+# =============================================================================
+# PHASE TIMEOUTS (0 = no timeout, run until complete)
+# =============================================================================
+
+phase_timeouts:
+  js_analysis: 0
+  param_fuzzing: 0
+  endpoint_discovery: 0
+  nuclei_scan: 0
+  verification: 0
+  external_scanners: 0
 
 # =============================================================================
 # LIMITS (0 = unlimited)
@@ -130,71 +196,125 @@ limits:
 # =============================================================================
 
 port_scan:
-  full_scan: true              # Scan all common ports
-  custom_ports: []             # Add specific ports: [8080, 8443]
+  # Port scanning is useful here (not explicitly excluded by TFH)
+  full_scan: true
+  custom_ports: [80, 443, 8080, 8443, 3000, 4000, 9090, 50051]
+  # gRPC ports important for blockchain/orb infrastructure
+  grpc_ports: [50051, 50052, 9090]
 
 # =============================================================================
 # VERIFICATION
 # =============================================================================
 
 verification:
-  threads: 10                  # Concurrent verification threads
+  threads: 10
   verify_only_high_priority: false
-  test_default_credentials: false  # DO NOT enable unless authorized
+  test_default_credentials: false   # NEVER enable - violates program rules
 
 # =============================================================================
 # NUCLEI VULNERABILITY SCANNING
 # =============================================================================
 
 nuclei_scan:
-  enabled: true                # Enable/disable Nuclei scanning
-  
-  # Severity levels to scan for
+  enabled: true
+
   severity:
     - critical
     - high
     - medium
-    # - low
-    # - info
-  
-  # Tags to include (leave empty for all)
-  tags: []
-    # - cve
-    # - exposure
-    # - misconfig
-    # - tech
-  
-  # Tags to exclude
+    - low                            # Info-level findings for OIDC/OAuth gaps
+
+  # Focus tags relevant to TFH tech stack
+  tags:
+    - oauth
+    - jwt
+    - graphql
+    - cors
+    - ssrf
+    - idor
+    - exposure
+    - misconfig
+    - auth
+    - token
+    - api
+    - blockchain
+
   exclude_tags:
-    - dos                      # Exclude DoS tests
-  
-  # Path to custom Nuclei templates (optional)
-  custom_templates: null       # Example: "custom_templates/"
-  
-  # What targets to scan
+    - dos                            # DoS is prohibited (with WC exception)
+    - fuzzing
+    - intrusive
+
+  custom_templates: null
+
   scan_targets:
-    subdomains: true           # Scan discovered live subdomains
-    endpoints: true            # Scan discovered endpoints
-    cloud_buckets: false       # Scan cloud bucket URLs (may cause access issues)
-    ports: true                # Scan web services on open ports
-  
-  # Performance settings
-  rate_limit: 150              # Requests per minute
-  timeout: 300                 # Timeout per target (seconds)
-  threads: 10                  # Concurrent threads
-  
-  # Template updates
-  update_templates: false      # Update Nuclei templates before scan (adds time)
+    subdomains: true
+    endpoints: true
+    cloud_buckets: true              # Check S3, GCS (Worldcoin may use GCP/AWS)
+    ports: true
+
+  rate_limit: 100
+  timeout: 0              # No timeout limit - run until complete
+  threads: 10
+
+  update_templates: true
+
+  extra_flags:
+    - "-stats"
+    - "-duc"
+
+  include_request: true
+  include_response: false
+
+  # Headers sent with every Nuclei request
+  # Static headers go here. For a dynamic token (e.g. after Ethereum auth),
+  # either set x-authorization here or use nuclei_config_file below.
+  custom_headers:
+    X-HackerOne-Research: "sengtocxoen"
+    # x-authorization: ""    # Uncomment and paste token from ethereum auth flow
+
+  # Optional: point to nuclei-auth.yaml for Nuclei's native -config support.
+  # Useful when you want to manage headers outside this file.
+  nuclei_config_file: "nuclei-auth.yaml"
+
+# =============================================================================
+# EXTERNAL SCANNERS (nikto + wapiti + nuclei — used by phase 9 of deep scan)
+# =============================================================================
+
+external_scanners:
+  nikto: true
+  wapiti: true
+  nuclei: true
+
+  severity:
+    - critical
+    - high
+    - medium
+
+  exclude_tags:
+    - dos
+    - fuzzing
+    - intrusive
+
+  rate_limit: 100
+  threads: 3
+
+  # Auth headers forwarded to Nuclei (mirrors nuclei_scan.custom_headers above)
+  custom_headers:
+    X-HackerOne-Research: "sengtocxoen"
+    # x-authorization: ""    # Uncomment and paste token
+
+  # Same Nuclei config file used by standalone runner
+  nuclei_config_file: "nuclei-auth.yaml"
 
 # =============================================================================
 # OUTPUT
 # =============================================================================
 
 output:
-  directory: "results"         # Output directory
+  directory: "results/toolsforhumanity"
   save_json: true
   save_txt: true
-  save_html: false
+  save_html: true
   verbose: true
 
 # =============================================================================
@@ -202,21 +322,415 @@ output:
 # =============================================================================
 
 safety:
-  confirm_before_run: true     # Ask for confirmation
-  show_review: true            # Show full review before running
-  max_threads: 10
+  confirm_before_run: true
+  show_review: true
+  max_threads: 15
+
+# =============================================================================
+# SCOPE RESTRICTIONS
+# =============================================================================
+
+scope:
+  # In-scope: all bounty-eligible patterns from CSV
+  in_scope:
+    # Primary Assets
+    - "id.worldcoin.org"
+    - "developer.worldcoin.org"
+
+    # Wildcards - Secondary
+    - "*.worldcoin.org"
+    - "*.consumer.worldcoin.org"
+    - "*.toolsforhumanity.com"
+    - "*.worldcoin-distributors.com"
+    - "*.worldcoin.dev"
+
+    # Direct URLs - Secondary
+    - "toolsforhumanity.com"
+    - "worldcoin.org"
+    - "world.org"
+    - "getworldcoin.com"
+
+  # Out-of-scope: DO NOT TEST
+  out_of_scope:
+    - "support.worldcoin.com"        # Explicitly out-of-scope in CSV
+    - "support.world.org"            # Explicitly out-of-scope in CSV
+    # Per rules: third-party hosted services on TFH/Worldcoin subdomains
+    - "*.third-party.*"
+
+  # Per program rules: no testing third-party services
+  exclude_patterns:
+    - "*support*worldcoin*"
+    - "*support*world*"
+
+# =============================================================================
+# AUTHENTICATION (Test Credentials Provided by TFH)
+# =============================================================================
+
+# TFH provides test credentials for api.consumer.worldcoin.org
+# Authentication uses Ethereum public-key cryptography challenge-response
+
+test_credentials:
+  consumer_api:
+    type: "ethereum_keypair"
+    # IMPORTANT: This is the test private key provided in Overview.md
+    # Used ONLY for api.consumer.worldcoin.org testing
+    private_key: "0x4bb934c301cf29d8d2f38f09d2e9d23d0a66b352a8291bcde49734886ce80f62"
+    api_base: "https://api.consumer.worldcoin.org/v1/graphql"
+
+    # Auth flow:
+    # 1. POST /v1/graphql -> requestChallengeV2(eoaAddress) -> challenge
+    # 2. Sign challenge with private key (ethers.js wallet.signMessage)
+    # 3. POST /v1/graphql -> solveChallengeV2(challenge, signature) -> accessToken
+    # 4. Use header: x-authorization: <accessToken>
+    auth_header: "x-authorization"
+    auth_flow: "ethereum_challenge_response"
+
+# =============================================================================
+# TESTING RULES (TFH REQUIREMENTS)
+# =============================================================================
+
+testing_rules:
+  # Use only accounts you own or the provided test credentials
+  use_own_accounts_only: true
+
+  # Provided test account for consumer API
+  test_private_key_provided: true
+
+  # DO NOT access other users' accounts or data
+  no_access_other_users: true
+
+  # NO social engineering
+  no_social_engineering: true
+  no_phishing: true
+
+  # NO denial of service (WC exception noted)
+  no_dos: true
+  # World Chain DoS IS explicitly in scope per Overview.md
+  worldchain_dos_in_scope: true
+
+  # NO physical attacks
+  no_physical_attacks: true
+
+  # DO NOT disrupt Orb network or third-party services on TFH subdomains
+  no_disruption_of_service: true
+  no_third_party_service_testing: true
+
+  # Respect privacy: no data destruction
+  no_data_destruction: true
+  respect_user_privacy: true
+
+# =============================================================================
+# ELIGIBLE VULNERABILITY TYPES (HIGH PRIORITY)
+# =============================================================================
+
+priority_vulnerabilities:
+  critical:
+    - "Account Takeover via OIDC/OAuth (id.worldcoin.org)"
+    - "Authentication Bypass on WorldID"
+    - "Remote Code Execution (RCE)"
+    - "SQL Injection"
+    - "Smart Contract Exploits (Worldcoin Address Book)"
+    - "Private Key / Wallet Compromise"
+    - "Reentrancy Attack on Smart Contracts"
+    - "Access Control Bypass on Smart Contracts"
+
+  high:
+    - "IDOR on User Data (crypto wallet, balance)"
+    - "GraphQL Injection / Batch Attack Abuse"
+    - "GraphQL Introspection Data Leakage"
+    - "SSRF to Cloud Metadata (AWS/GCP)"
+    - "OAuth Token Leakage"
+    - "JWT Algorithm Confusion / None Algorithm"
+    - "Privilege Escalation (developer portal)"
+    - "API Key/Secret Exposure (developer portal)"
+    - "CORS Misconfiguration on API endpoints"
+    - "Business Logic Flaws (wallet/crypto transfers)"
+    - "Authentication Bypass"
+
+  medium:
+    - "XSS on Authenticated Pages (OIDC, developer portal)"
+    - "CSRF on State-Changing Actions"
+    - "Information Disclosure (internal endpoints, error messages)"
+    - "Subdomain Takeover"
+    - "Cache Poisoning"
+    - "Request Smuggling"
+    - "Prototype Pollution"
+    - "Hardcoded Secrets in github.com/worldcoin repos"
+
+  low:
+    - "Open Redirect (with OAuth/OIDC chaining potential)"
+    - "CORS Misconfiguration on non-sensitive endpoints"
+    - "Information Leakage via GraphQL field suggestions"
+
+# =============================================================================
+# NON-ELIGIBLE VULNERABILITIES (DO NOT REPORT)
+# =============================================================================
+
+non_eligible:
+  - "Clickjacking on pages with no sensitive actions"
+  - "DoS and DDoS (except World Chain)"
+  - "Unconfirmed reports from automated vulnerability scanners"
+  - "Broken link hijacking"
+  - "CSRF on unauthenticated forms or no-sensitive-action forms"
+  - "Attacks requiring MITM or physical device access"
+  - "Previously known vulnerable libraries (without working PoC)"
+  - "CSV injection (without demonstrating impact)"
+  - "Missing best practices in SSL/TLS configuration"
+  - "Content spoofing and text injection"
+  - "Rate limiting and brute force (most issues)"
+  - "Missing best practices in security policies"
+  - "Missing HTTPOnly or Secure flags on cookies"
+  - "Missing email best practices (SPF/DKIM/DMARC)"
+  - "Outdated browser vulnerabilities (<2 versions behind)"
+  - "Software version disclosure / banner identification"
+  - "Descriptive error messages (stack traces, without exploit)"
+  - "Zero-day CVEs < 3 months old (case-by-case basis)"
+  - "Tabnabbing"
+  - "Open redirect (without additional security impact)"
+  - "Issues requiring unlikely user interaction"
+  - "Library vulnerabilities without proof of reachability in production"
+  - "Third-party hosted services on TFH/Worldcoin subdomains"
+  - "Testing against Orb physical infrastructure (report directly)"
+
+# =============================================================================
+# TFH-SPECIFIC ATTACK SURFACE NOTES
+# =============================================================================
+
+attack_surface:
+  # WorldID OIDC Provider - HIGHEST VALUE
+  oidc_provider:
+    url: "https://id.worldcoin.org"
+    focus:
+      - "OAuth 2.0 / OIDC token leakage"
+      - "Authorization code interception"
+      - "PKCE bypass"
+      - "State parameter bypass (CSRF)"
+      - "Open redirect in redirect_uri"
+      - "Account takeover via OIDC misconfiguration"
+      - "ID token forgery/manipulation"
+
+  # Developer Portal - HIGH VALUE
+  developer_portal:
+    url: "https://developer.worldcoin.org"
+    focus:
+      - "IDOR in app management (access other devs apps)"
+      - "API key/secret exposure"
+      - "Privilege escalation to admin"
+      - "Webhook URL injection"
+      - "App impersonation"
+
+  # World App Consumer API (GraphQL)
+  consumer_graphql_api:
+    url: "https://api.consumer.worldcoin.org/v1/graphql"
+    auth_type: "ethereum_challenge_response"
+    focus:
+      - "GraphQL introspection"
+      - "Batch query abuse"
+      - "IDOR (access other users wallets/data)"
+      - "Business logic in wallet/transfer operations"
+      - "Insecure Direct Object Reference via eoaAddress"
+      - "Mass assignment via GraphQL mutations"
+
+  # GitHub Source Code - PASSIVE RECON
+  source_code:
+    url: "https://github.com/worldcoin"
+    focus:
+      - "Hardcoded secrets / API keys"
+      - "Private key material"
+      - "Internal infrastructure URLs"
+      - "Vulnerable dependency usage"
+      - "Logic bugs visible from source"
+    tools:
+      - "trufflehog"
+      - "gitleaks"
+
+  # Smart Contracts - BLOCKCHAIN
+  smart_contracts:
+    reference: "https://docs.world.org/world-chain/reference/address-book"
+    focus:
+      - "Reentrancy attacks"
+      - "Integer overflow/underflow"
+      - "Access control bypass"
+      - "Flash loan attacks"
+      - "Oracle manipulation"
+      - "Frontrunning"
+    # Note: Requires specialized blockchain security testing tools
+
+  # Orb API - LIMITED TESTING (no credentials provided)
+  orb_api:
+    url: "https://auth.orb.worldcoin.org"
+    note: "No credentials provided. Auth is public-key cryptography based."
+    focus:
+      - "Public-key cryptography implementation flaws"
+      - "Authentication bypass without credentials"
+
+  # Wildcard subdomains - DISCOVERY TARGETS
+  wildcard_discovery:
+    patterns:
+      - "*.worldcoin.org"
+      - "*.consumer.worldcoin.org"
+      - "*.toolsforhumanity.com"
+      - "*.worldcoin-distributors.com"
+      - "*.worldcoin.dev"
+    focus:
+      - "Dev/staging environments (*.worldcoin.dev)"
+      - "Internal admin panels"
+      - "Debug endpoints"
+      - "Subdomain takeover opportunities"
+
+# =============================================================================
+# CLOUD ENUMERATION
+# =============================================================================
+
+cloud_enum:
+  # Worldcoin infrastructure likely uses GCP (Google backing) and/or AWS
+  providers:
+    aws_s3: true
+    gcp_storage: true
+    azure_blob: false
+
+  # Bucket naming patterns to try
+  bucket_patterns:
+    - "worldcoin"
+    - "toolsforhumanity"
+    - "tfh"
+    - "world-app"
+    - "worldcoin-prod"
+    - "worldcoin-dev"
+    - "worldcoin-staging"
+    - "worldcoin-backup"
+    - "wld"
+    - "world-id"
+    - "worldid"
+
+  test_permissions: true             # Check read/write/list access
+
+# =============================================================================
+# OSINT CONFIGURATION
+# =============================================================================
+
+osint:
+  whois: true
+  email_harvesting: true
+
+  google_dorks:
+    enabled: true
+    max_results: 100
+    queries:
+      - "site:worldcoin.org filetype:env"
+      - "site:toolsforhumanity.com filetype:env"
+      - "site:*.worldcoin.org inurl:api"
+      - "site:*.worldcoin.org inurl:admin"
+      - "site:*.worldcoin.org inurl:graphql"
+      - "site:*.worldcoin.org ext:json"
+      - "site:worldcoin.dev inurl:debug"
+
+  repository_scanning:
+    # github.com/worldcoin is explicitly in scope
+    target_org: "worldcoin"
+    enabled: true
+    tools:
+      - "trufflehog"
+      - "gitleaks"
+    deep_history: true               # Scan full commit history
+
+  # Treasure Map (official TFH researcher guide)
+  treasure_map:
+    url: "https://github.com/worldcoin/treasure-map"
+    note: "Review this FIRST - TFH provides it to guide researchers"
+
+# =============================================================================
+# API KEYS (fill in yours)
+# =============================================================================
+
+api_keys:
+  shodan: null
+  censys_id: null
+  censys_secret: null
+  virustotal: null
+  securitytrails: null
+  binaryedge: null
+  github_token: null               # Strongly recommended for github.com/worldcoin scanning
+  gitlab_token: null
+  hunter_io: null
+  chaos: null
+  netlas: null
 
 # =============================================================================
 # NOTES
 # =============================================================================
 
 notes: |
-  Bug bounty scan configuration - Maximum Capabilities Edition
-  - Edit targets, headers, and phases as needed
-  - Enable advanced_features for maximum bug discovery
-  - Secret validation reduces false positives by 90%
-  - Response dedup speeds up scans by 60%
-  - Vulnerability chaining auto-escalates severity
-  - Nuclei scanning automatically runs on discovered targets
-  - Review configuration before running
-  - Follow program rules and scope
+  Tools For Humanity (TFH) / Worldcoin Bug Bounty Program Configuration
+  =====================================================================
+
+  PROGRAM LINK: https://hackerone.com/toolsforhumanity
+  TECH STACK: Ethereum/EVM, GraphQL, Node.js, React, Go, Rust (Orb),
+              GCP/AWS, Kubernetes, PostgreSQL
+
+  RESPONSE SLAs:
+    First Response : 1 business day
+    Time to Triage : 10 business days
+    Time to Bounty : 14 business days
+    Time to Resolve: varies
+
+  !! START HERE !!
+  Read the Treasure Map FIRST:
+    https://github.com/worldcoin/treasure-map
+  This is TFH's official researcher guide with prioritized targets.
+
+  TEST CREDENTIALS (provided by TFH):
+    Private Key : 0x4bb934c301cf29d8d2f38f09d2e9d23d0a66b352a8291bcde49734886ce80f62
+    Endpoint    : https://api.consumer.worldcoin.org/v1/graphql
+    Auth Flow   : Ethereum challenge-response -> accessToken
+    Auth Header : x-authorization: <accessToken>
+
+  PRIMARY TARGETS (highest bounty potential):
+    1. id.worldcoin.org        - WorldID OIDC Provider (auth/account takeover)
+    2. developer.worldcoin.org - Developer Portal (IDOR, key exposure)
+    3. Smart Contracts         - docs.world.org/world-chain/reference/address-book
+    4. World App (iOS/Android) - Mobile apps (TFH-owned)
+
+  SECONDARY BUT HIGH-VALUE:
+    5. api.consumer.worldcoin.org - GraphQL API (IDOR, business logic)
+    6. github.com/worldcoin      - Source code (secrets, logic bugs)
+    7. *.worldcoin.dev           - Dev environments (debug, staging)
+
+  CRITICAL RULES:
+    - NO DoS/DDoS (World Chain DoS IS in scope as exception)
+    - NO social engineering, phishing, smishing
+    - NO physical attacks or Orb device tampering
+    - NO third-party service testing on TFH subdomains
+    - Use ONLY accounts you own or the provided test key
+    - No data destruction or privacy violations
+    - One vuln per report (unless chaining for higher impact)
+    - First report wins the bounty
+
+  INELIGIBLE (common gotchas):
+    - Clickjacking on non-sensitive pages
+    - Missing cookie flags (HTTPOnly/Secure)
+    - Missing SPF/DKIM/DMARC
+    - SSL/TLS best practice issues
+    - Rate limiting issues
+    - Open redirect WITHOUT additional impact
+    - Automated scanner output without explanation
+
+  OIDC ATTACK IDEAS:
+    - OAuth code/token leakage in referrer or fragment
+    - redirect_uri open redirect -> code theft
+    - PKCE downgrade attack
+    - State parameter CSRF bypass
+    - id_token algorithm confusion (RS256 -> HS256)
+    - Scope escalation
+
+  GRAPHQL ATTACK IDEAS:
+    - Introspection enabled in production
+    - IDOR via eoaAddress/userId manipulation
+    - Batch query abuse for rate limit bypass
+    - Field suggestions info disclosure
+    - Operation aliasing for auth bypass
+    - SQL injection via GraphQL variables
+
+  Last Updated : 2026-02-23
+  Based on     : Overview.md & scopes_for_toolsforhumanity_at_2026-02-23_13_41_53_UTC.csv
+

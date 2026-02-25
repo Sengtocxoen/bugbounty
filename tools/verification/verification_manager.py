@@ -199,7 +199,7 @@ class VerificationManager:
                 service = port_info.get("service", "unknown")
                 
                 try:
-                    result = self.service_verifier.verify_port(host, port, service)
+                    result = self.service_verifier.verify(host, port, service)
                     results.append(result)
                     
                     if result.verified and result.severity in [Severity.CRITICAL, Severity.HIGH]:
@@ -270,7 +270,7 @@ class VerificationManager:
         
         for target in targets[:10]:
             try:
-                api_results = self.api_verifier.verify_api(f"https://{target}" if not target.startswith('http') else target)
+                api_results = self.api_verifier.verify(f"https://{target}" if not target.startswith('http') else target)
                 results.extend(api_results)
                 
                 for result in api_results:
@@ -310,7 +310,7 @@ class VerificationManager:
                 target_url = f"https://{issue.get('target', targets[0])}" if targets else None
                 if target_url:
                     try:
-                        result = self.ssti_verifier.verify_url(target_url)
+                        result = self.ssti_verifier.verify(target_url)
                         results.append(result)
                         
                         if result.verified:
