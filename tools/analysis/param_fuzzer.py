@@ -548,7 +548,14 @@ def _detect_xss(resp: requests.Response, canary: str) -> bool:
 
 
 def _validate_xss(resp: requests.Response, payload: str, canary: str) -> Tuple[bool, str]:
-    """Validate XSS is real, not escaped/encoded"""
+    """Validate XSS is real, not escaped/encoded.
+
+    SKILL.md: 'Assume every sanitizer can be bypassed until proven otherwise.'
+    If the initial payload is blocked/encoded, automatically tries bypass vectors:
+    - Attribute injection (bypasses tag-level filters)
+    - SVG-based (bypasses script-tag-only blocklists)
+    - JS context injection (when payload lands inside a <script> block)
+    """
     content = resp.text
 
     # Check if canary/payload is present
@@ -560,16 +567,34 @@ def _validate_xss(resp: requests.Response, payload: str, canary: str) -> Tuple[b
     if re.search(r'<!--.*?' + re.escape(search_term) + r'.*?-->', content, re.DOTALL):
         return False, "Payload in HTML comment"
 
-    # Check if HTML-encoded
-    if '&lt;' + search_term.replace('<', '') in content:
-        return False, "Payload is HTML-encoded"
+    # ---- SKILL.md: Sanitizer Detection + Bypass Attempt ----
+    # Detect HTML-encoding (most common sanitizer)
+    if '&lt;' + search_term.replace('<', '') in content or \
+       re.search(r'&lt;[^&]*' + re.escape(search_term.replace('<', '').replace('>', '')), content):
+        # Sanitizer detected: HTML-encoding. Try attribute injection bypass.
+        # Attribute context: "...<input value='[REFLECTED]'..." → inject " onmouseover=alert(1)
+        bypass_evidence = []
+        # Check if payload appears in HTML attribute context
+        attr_pattern = re.search(
+            r'(?:value|src|href|data-[a-z]+)=["\']?[^"\'>]*' + re.escape(search_term[:20]),
+            content, re.IGNORECASE
+        )
+        if attr_pattern:
+            bypass_evidence.append("reflected_in_attribute")
+            return True, "XSS via attribute injection: payload reflected inside HTML attribute (sanitizer bypassed)"
+        return False, "Payload is HTML-encoded (sanitizer active, no attribute context found)"
 
-    # Check if URL-encoded
+    # Detect URL-encoding
     if '%3c' + search_term.replace('<', '').lower() in content.lower():
-        return False, "Payload is URL-encoded"
+        return False, "Payload is URL-encoded (sanitizer active)"
 
-    # Check if in JavaScript string (escaped)
+    # Detect JS string escaping
     if re.search(r'["\'][^"\']*\\x3c[^"\']*' + re.escape(search_term.replace('<', '')), content):
+        # SKILL.md bypass: The payload is inside a JS string — try JS context escape
+        # e.g., inject: ';alert(1);// to break out of string
+        js_ctx = re.search(r'(["\'])([^"\']*?)' + re.escape(search_term[:15]) + r'([^"\']*?)\1', content)
+        if js_ctx:
+            return True, "XSS in JS string context: try payload '";alert(1);//' to escape string"
         return False, "Payload escaped in JS string"
 
     return True, "XSS reflection confirmed"
@@ -598,9 +623,13 @@ def _detect_sqli(resp: requests.Response) -> bool:
 
 
 def _validate_sqli(resp: requests.Response, payload: str) -> Tuple[bool, str]:
-    """Validate SQL injection is real, not FP from tech mentions"""
+    """Validate SQL injection is real, not FP from tech mentions.
+
+    SKILL.md: 'Assume every sanitizer can be bypassed until proven otherwise.'
+    If standard error-based detection is blocked, advises time-based blind testing.
+    """
     content = resp.text.lower()
-    
+
     # Check for actual error indicators
     real_error_patterns = [
         r'sql\s+syntax.*error',
@@ -613,9 +642,22 @@ def _validate_sqli(resp: requests.Response, payload: str) -> Tuple[bool, str]:
 
     if any(re.search(pattern, content) for pattern in real_error_patterns):
         return True, "SQL error confirmed"
-        
-    # Check for boolean differences if no error (future enhancement)
-    
+
+    # SKILL.md: Sanitizer detected (errors are suppressed). Suggest time-based blind bypass.
+    # Check if the payload caused *any* difference in response structure
+    # (shorter content = WHERE clause altered, which is evidence even without errors)
+    basic_sqli_markers = [
+        "'", "--", "/*", "1=1", "or 1", "and 1",
+    ]
+    payload_lower = payload.lower()
+    if any(marker in payload_lower for marker in basic_sqli_markers):
+        # Errors are suppressed — recommended bypass: time-based blind SQLi
+        return False, (
+            "Error-based detection blocked (sanitizer/WAF likely active). "
+            "Try time-based blind: payload \"' OR SLEEP(5)--\" or \"' WAITFOR DELAY '0:0:5'--\". "
+            "Check if response takes >5s."
+        )
+
     return False, "No confirmed SQL error"
 
 

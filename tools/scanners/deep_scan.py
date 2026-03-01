@@ -69,9 +69,83 @@ from discovery.cloud_enum import CloudEnumerator, CloudEnumResult
 from techniques.waf_evasion import WAFEvader, WAFInfo
 from scanners.external_scanners import ExternalScanners
 
+# SKILL.md Phase 3: Exploit Chain Synthesis
+try:
+    from analysis.vuln_chainer import VulnerabilityChainer, Vulnerability as ChainVuln, VulnType
+    CHAINER_AVAILABLE = True
+except ImportError:
+    CHAINER_AVAILABLE = False
+
+# SKILL.md Phase 2: Source-Sink Taint Mapping
+try:
+    from analysis.source_sink_mapper import SourceSinkMapper
+    MAPPER_AVAILABLE = True
+except ImportError:
+    MAPPER_AVAILABLE = False
+
 
 # Global flag for graceful shutdown
 SHUTDOWN_FLAG = False
+
+
+def _extract_sink_params(code_snippet: str, page_url: str) -> List[Dict]:
+    """
+    SKILL.md Phase 1: Source Identification from DOM Sink context.
+
+    Given a JavaScript code snippet containing a DOM sink (e.g. innerHTML, eval),
+    extract likely parameter names that feed into it and return them as Source objects
+    so the fuzzer can prioritize testing those parameters.
+
+    Examples it detects:
+      - location.search / URLSearchParams  → URL query parameters
+      - document.getElementById('x').value → form input: 'x'
+      - getParam('q') / params['q']        → param name 'q'
+    """
+    import re as _re
+    results = []
+
+    if not code_snippet:
+        return results
+
+    # Pattern 1: URLSearchParams or location.search usage → query param
+    url_param_patterns = [
+        r'\.get\(["\'](\w+)["\']',          # params.get('name')
+        r'getParameterByName\(["\'](\w+)["\']',  # getParameterByName('name')
+        r'getParam\(["\'](\w+)["\']',        # getParam('name')
+        r'params\[["\'](\w+)["\']',          # params['name']
+        r'query\[["\'](\w+)["\']',           # query['name']
+        r'searchParams\[["\'](\w+)["\']',    # searchParams['name']
+    ]
+    for pattern in url_param_patterns:
+        for match in _re.finditer(pattern, code_snippet):
+            param_name = match.group(1)
+            results.append({"url": page_url, "param": param_name, "source_type": "url_query"})
+
+    # Pattern 2: getElementById/querySelector → form input name (DOM Source)
+    dom_input_patterns = [
+        r'getElementById\(["\'](\w+)["\']',
+        r'querySelector\(["\']#(\w+)["\']',
+        r'getElementsByName\(["\'](\w+)["\']',
+    ]
+    for pattern in dom_input_patterns:
+        for match in _re.finditer(pattern, code_snippet):
+            results.append({"url": page_url, "param": match.group(1), "source_type": "dom_input"})
+
+    # Pattern 3: hash, pathname, referrer as sources
+    if 'location.hash' in code_snippet:
+        results.append({"url": page_url, "param": "fragment", "source_type": "location_hash"})
+    if 'document.referrer' in code_snippet:
+        results.append({"url": page_url, "param": "referrer", "source_type": "referrer"})
+
+    # Deduplicate
+    seen = set()
+    unique = []
+    for r in results:
+        key = (r["url"], r["param"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+    return unique
 
 
 def signal_handler(signum, frame):
@@ -262,6 +336,15 @@ class DeepScanResult:
     # Verification results
     verified_findings: List[Dict] = field(default_factory=list)
     verification_summary: Dict[str, int] = field(default_factory=dict)
+
+    # SKILL.md Phase 3: Exploit chains detected
+    vuln_chains: List[Dict] = field(default_factory=list)
+
+    # SKILL.md Phase 2: Taint paths (source → sink)
+    taint_paths: List[Dict] = field(default_factory=list)
+
+    # DOM sink-associated parameters (passed from JS analysis to param fuzzing)
+    _sink_priority_params: List[Dict] = field(default_factory=list)
 
     # Statistics
     total_requests: int = 0
@@ -1013,10 +1096,10 @@ class DeepScanner:
 
             try:
                 if not self.config.skip_recursive:
-                     self.log(f"  [RECURSIVE] Starting deep JS analysis (depth=2)...")
-                     js_result = self.js_analyzer.recursive_analyze(url, max_depth=2)
+                    self.log(f"  [RECURSIVE] Starting deep JS analysis (depth=2)...")
+                    js_result = self.js_analyzer.recursive_analyze(url, max_depth=2)
                 else:
-                     js_result = self.js_analyzer.analyze_url(url)
+                    js_result = self.js_analyzer.analyze_url(url)
                      
                 result.js_files_analyzed += len(js_result.js_files)
 
@@ -1035,16 +1118,25 @@ class DeepScanner:
 
                 # Collect DOM sinks
                 for sink in js_result.dom_sinks:
-                    all_sinks.append({
+                    sink_entry = {
                         "sink_type": sink.sink_type,
                         "code_snippet": sink.code_snippet,
                         "file": sink.file,
                         "exploitable": sink.exploitable,
                         "notes": sink.notes,
                         "target": target,
-                    })
+                    }
+                    all_sinks.append(sink_entry)
                     if sink.exploitable:
                         self.log(f"  [!!!] EXPLOITABLE DOM SINK: {sink.sink_type} in {sink.file}", "FINDING")
+
+                    # SKILL.md Phase 1 → Phase 2: Extract parameters from DOM sink context
+                    # so the fuzzer prioritizes Sources that reach this Sink
+                    sink_params = _extract_sink_params(sink.code_snippet, url)
+                    for param_info in sink_params:
+                        param_info["sink_type"] = sink.sink_type
+                        param_info["sink_file"] = sink.file
+                        result._sink_priority_params.append(param_info)
 
                 # Collect API endpoints
                 for ep in js_result.api_endpoints:
@@ -1065,9 +1157,12 @@ class DeepScanner:
 
     def phase_param_fuzzing(self, targets: List[str], result: DeepScanResult):
         """
-        Phase 6: Parameter fuzzing for vulnerabilities
+        Phase 8: Parameter fuzzing for vulnerabilities
         Tests for: XSS, SQLi, SSRF, Path Traversal, Open Redirect,
                    Command Injection, LFI, XXE, SSTI
+
+        SKILL.md Enhancement: DOM sink-associated parameters from JS analysis
+        are injected as high-priority targets (Source → Sink tracing).
         """
         if self.config.skip_fuzz:
             self.log("Parameter fuzzing skipped", "WARNING")
@@ -1089,22 +1184,40 @@ class DeepScanner:
         # Add API endpoints
         urls_to_fuzz.update(result.api_endpoints)
 
-        # Apply limit if set
-        if self.config.max_fuzz_urls > 0:
-            urls_to_fuzz = list(urls_to_fuzz)[:self.config.max_fuzz_urls]
+        # SKILL.md Phase 2 → Phase 3: Add URLs from DOM sink-associated params as priority targets
+        sink_priority_urls = set()
+        if result._sink_priority_params:
+            for sp in result._sink_priority_params:
+                sink_priority_urls.add(sp.get("url", ""))
+            sink_priority_urls.discard("")
+            self.log(f"  [TAINT] Prioritizing {len(sink_priority_urls)} URLs with known DOM sink parameters", "SUCCESS")
 
-        self.phase_header(8, "PARAMETER FUZZING", f"{len(urls_to_fuzz)} URLs")
+        # Apply limit if set (but always include sink-priority URLs)
+        fuzz_list = list(sink_priority_urls) + [u for u in urls_to_fuzz if u not in sink_priority_urls]
+        if self.config.max_fuzz_urls > 0:
+            fuzz_list = fuzz_list[:self.config.max_fuzz_urls]
+
+        self.phase_header(8, "PARAMETER FUZZING", f"{len(fuzz_list)} URLs ({len(sink_priority_urls)} from DOM sinks)")
 
         if self.check_shutdown():
             return
 
         self.log(f"Testing {len(FUZZ_PAYLOADS)} vulnerability types...")
 
-        for i, url in enumerate(urls_to_fuzz):
+        # Build sink param hints: {url -> [param_names]} for fuzzer to prioritize
+        sink_param_hints: Dict[str, List[str]] = {}
+        for sp in result._sink_priority_params:
+            url_key = sp.get("url", "")
+            if url_key:
+                sink_param_hints.setdefault(url_key, []).append(sp.get("param", ""))
+
+        for i, url in enumerate(fuzz_list):
             if self.check_shutdown():
                 break
 
-            self.log(f"Fuzzing [{i+1}/{len(urls_to_fuzz)}]: {url[:80]}...")
+            is_sink_target = url in sink_priority_urls
+            label = "[DOM-SINK]" if is_sink_target else ""
+            self.log(f"Fuzzing [{i+1}/{len(fuzz_list)}] {label}: {url[:80]}...")
 
             try:
                 fuzz_result = self.param_fuzzer.fuzz_url(url, discover_params=True)
@@ -1129,6 +1242,8 @@ class DeepScanner:
                         "cwe": finding.cwe,
                         "cvss": finding.cvss,
                         "references": finding.references,
+                        # SKILL.md: Flag if this finding came from a known DOM sink path
+                        "from_dom_sink": is_sink_target,
                     }
                     result.vulnerabilities.append(vuln_entry)
                     self.log(f"  [!!!] {finding.severity.upper()} {finding.vuln_name or finding.vuln_type}: {finding.parameter}", "FINDING")
@@ -1256,6 +1371,116 @@ class DeepScanner:
             result.errors.append(f"External scanners error: {str(e)}")
             self.log(f"External scanners error: {e}", "ERROR")
             traceback.print_exc()
+
+    # ======================== PHASE 11: EXPLOIT CHAIN ANALYSIS ========================
+
+    def phase_vuln_chain_analysis(self, result: DeepScanResult):
+        """
+        SKILL.md Phase 3: Exploit Chain Synthesis
+        Automatically chains low-severity findings into high-impact exploits.
+        Uses VulnerabilityChainer to detect Source→Sink exploit chains and
+        escalate primitives (e.g. info leak → SSRF → credential dump).
+        """
+        if not CHAINER_AVAILABLE:
+            self.log("VulnerabilityChainer not available, skipping chain analysis", "WARNING")
+            return
+
+        self.phase_header(11, "EXPLOIT CHAIN ANALYSIS [SKILL.md Phase 3]", result.target)
+
+        chainer = VulnerabilityChainer()
+
+        # Map severity strings to CVSS estimates for chain scoring
+        severity_cvss = {"critical": 9.5, "high": 7.5, "medium": 5.5, "low": 3.0, "info": 1.0}
+
+        # Feed all findings (vulns + potential issues) into the chainer
+        all_findings = list(result.vulnerabilities) + list(result.potential_issues)
+        for i, v in enumerate(all_findings):
+            vuln_type_str = v.get("vuln_type", v.get("type", "")).upper()
+            # Map to VulnType enum
+            type_map = {
+                "XSS": VulnType.XSS, "SQLI": VulnType.SQLI, "SQLINJECTION": VulnType.SQLI,
+                "SSRF": VulnType.SSRF, "LFI": VulnType.LFI, "RCE": VulnType.RCE,
+                "IDOR": VulnType.IDOR, "XXE": VulnType.XXE, "CSRF": VulnType.CSRF,
+                "AUTHBYPASS": VulnType.AUTH_BYPASS, "AUTH_BYPASS": VulnType.AUTH_BYPASS,
+                "INFORMATIONLEAKAGE": VulnType.INFO_LEAK, "INFO_LEAK": VulnType.INFO_LEAK,
+                "NO_TLS": VulnType.INFO_LEAK, "MISSING_HSTS": VulnType.INFO_LEAK,
+                "SSL_CERTIFICATE_ISSUE": VulnType.INFO_LEAK,
+                "FILEUPLOAD": VulnType.FILE_UPLOAD, "FILE_UPLOAD": VulnType.FILE_UPLOAD,
+                "HIDDENDIRECTORY": VulnType.HIDDEN_DIR, "HIDDEN_DIR": VulnType.HIDDEN_DIR,
+            }
+            vt = type_map.get(vuln_type_str.replace("-", "_").upper())
+            if not vt:
+                continue
+            sev = v.get("severity", "medium").lower()
+            chain_vuln = ChainVuln(
+                vuln_id=f"V{i+1}",
+                vuln_type=vt,
+                severity=sev,
+                description=v.get("description", v.get("vuln_type", "")),
+                url=v.get("url", result.target),
+                parameter=v.get("parameter", ""),
+                poc=v.get("payload", ""),
+                cvss_score=float(v.get("cvss", severity_cvss.get(sev, 5.0))),
+            )
+            chainer.add_vulnerability(chain_vuln)
+
+        if not chainer.vulnerabilities:
+            self.log("No findings to chain — skipping", "WARNING")
+            return
+
+        # Detect chains
+        chains = chainer.detect_chains()
+
+        # Store chains in result
+        for chain in chains:
+            chain_entry = {
+                "chain_id": chain.chain_id,
+                "chain_type": chain.chain_type,
+                "severity": chain.combined_severity,
+                "cvss": chain.combined_cvss,
+                "vulnerabilities": [
+                    {"type": v.vuln_type.value, "url": v.url, "param": v.parameter}
+                    for v in chain.vulnerabilities
+                ],
+                "attack_narrative": chain.attack_narrative,
+            }
+            result.vuln_chains.append(chain_entry)
+            self.log(
+                f"  [CHAIN] {chain.chain_type} → {chain.combined_severity.upper()} "
+                f"(CVSS: {chain.combined_cvss:.1f})",
+                "FINDING"
+            )
+
+        # SKILL.md: Auto-escalate critical primitives
+        ssrf_vulns = [v for v in chainer.vulnerabilities if v.vuln_type == VulnType.SSRF]
+        for ssrf in ssrf_vulns:
+            escalation = chainer.auto_escalate_ssrf(ssrf.url)
+            self.log(f"  [ESCALATE] SSRF found — queuing cloud metadata tests: {escalation['targets'][:2]}", "WARNING")
+            # Pass escalation targets to taint mapper if available
+            result._sink_priority_params.append({"escalation": "ssrf", "targets": escalation["targets"]})
+
+        hidden_dirs = [v for v in chainer.vulnerabilities if v.vuln_type == VulnType.HIDDEN_DIR]
+        for hd in hidden_dirs:
+            escalation = chainer.auto_escalate_hidden_directory(hd.url)
+            self.log(f"  [ESCALATE] Hidden dir found — recommend deep crawl: {hd.url}", "WARNING")
+
+        # Build taint map if module available
+        if MAPPER_AVAILABLE:
+            try:
+                mapper = SourceSinkMapper()
+                mapper.ingest_vulns(chainer.vulnerabilities)
+                exploitable = mapper.get_exploitable_paths()
+                result.taint_paths = [p.to_dict() for p in exploitable]
+                if exploitable:
+                    self.log(f"  [TAINT] {len(exploitable)} exploitable Source→Sink paths identified", "FINDING")
+            except Exception as e:
+                self.log(f"  [TAINT] Mapper error: {e}", "WARNING")
+
+        result.phases_completed.append("vuln_chain_analysis")
+        self.log(
+            f"Exploit chain analysis complete: {len(chains)} chains, "
+            f"{len(result.taint_paths)} taint paths", "SUCCESS"
+        )
 
     # ======================== PHASE 10: VERIFICATION ========================
 
@@ -1390,6 +1615,13 @@ class DeepScanner:
             if not self.config.skip_verification:
                 timeout = self.config.phase_timeouts.get('verification', 300)
                 self._run_phase_with_timeout(self.phase_verification, timeout, result)
+
+            # Phase 11: SKILL.md — Exploit Chain Synthesis
+            # Runs AFTER fuzzing + verification so all findings are available
+            if self.check_shutdown():
+                result.scan_end = datetime.utcnow().isoformat()
+                return result
+            self.phase_vuln_chain_analysis(result)
 
         except Exception as e:
             result.errors.append(f"Fatal error: {str(e)}")

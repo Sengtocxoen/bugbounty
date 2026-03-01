@@ -9,6 +9,14 @@
 
 program: "toolsforhumanity"
 
+# =============================================================================
+# SCAN MODE
+# Available: deep, fullrecon, intelligent, continuous, recon, discover,
+#            parallel, osint, github, vuln_deep, bug_discovery, all
+# =============================================================================
+
+scan_mode: "deep"
+
 # Your HackerOne username
 h1_username: "sengtocxoen"
 
@@ -305,6 +313,35 @@ external_scanners:
 
   # Same Nuclei config file used by standalone runner
   nuclei_config_file: "nuclei-auth.yaml"
+
+# =============================================================================
+# GITHUB / GITLAB DORKING  (used by scan_mode: github)
+# =============================================================================
+
+github_dorking:
+  enabled: true
+  github_token: null        # Add token for higher rate limits (60 req/hr -> 5000 req/hr)
+  gitlab_token: null
+  max_results: 100
+
+# =============================================================================
+# DEEP VULNERABILITY SCAN  (used by scan_mode: vuln_deep)
+# =============================================================================
+
+vulnerability_scan:
+  enabled: true
+  nuclei: true
+  xss: true
+  sqli: true
+  ssrf: true
+  cors: true
+  lfi: true
+  ssti: true
+  crlf: true
+  redirect: true
+  prototype_pollution: true
+  http_smuggling: false     # Very noisy — enable manually
+  cache_attacks: false      # Requires careful target selection
 
 # =============================================================================
 # OUTPUT

@@ -217,6 +217,43 @@ def _get_advanced_features(config):
     return config.get('advanced', {})
 
 
+def _get_osint_config(config):
+    """Extract OSINT settings from config."""
+    return config.get('osint', {
+        'whois': True,
+        'email_harvesting': True,
+        'google_dorking': True,
+        'github_dorking': True,
+        'metadata_extraction': True,
+        'cloud_enum': True,
+    })
+
+
+def _get_github_config(config):
+    """Extract GitHub/GitLab dorking settings from config."""
+    return config.get('github_dorking', {
+        'enabled': True,
+        'github_token': '',
+        'gitlab_token': '',
+        'max_results': 50,
+    })
+
+
+def _get_vuln_deep_config(config):
+    """Extract deep vulnerability scan settings from config."""
+    return config.get('vulnerability_scan', {
+        'enabled': True,
+        'nuclei': True,
+        'xss': True,
+        'sqli': True,
+        'ssrf': True,
+        'cors': True,
+        'lfi': True,
+        'ssti': True,
+        'http_smuggling': False,
+    })
+
+
 # =============================================================================
 # CORE FUNCTIONS
 # =============================================================================
@@ -349,25 +386,32 @@ def confirm_scan(config: dict) -> bool:
 def select_scan_mode(config: dict) -> str:
     """Prompt the user to select a scan mode if not specified in config."""
     mode_descriptions = {
-        'deep':        'Deep comprehensive scan (all phases, maximum coverage)',
-        'fullrecon':   'Full reconnaissance pipeline (8-phase recon)',
-        'intelligent': 'Intelligent two-phase scanner (smart prioritization)',
-        'continuous':  'Continuous 24/7 scanner (ongoing monitoring)',
-        'recon':       'Wiz 5-phase reconnaissance (fast recon)',
-        'discover':    'Fast subdomain/asset discovery only',
-        'parallel':    'Parallel streaming scanner (speed-optimized)',
+        'deep':          'Deep comprehensive scan (all phases, maximum coverage)',
+        'fullrecon':     'Full reconnaissance pipeline (8-phase recon)',
+        'intelligent':   'Intelligent two-phase scanner (smart prioritization)',
+        'continuous':    'Continuous 24/7 scanner (ongoing monitoring)',
+        'recon':         'Wiz 5-phase reconnaissance (fast recon)',
+        'discover':      'Fast subdomain/asset discovery only',
+        'parallel':      'Parallel streaming scanner (speed-optimized)',
+        # New modes
+        'osint':         'OSINT recon (WHOIS, emails, dorks, GitHub, cloud assets)',
+        'github':        'GitHub/GitLab dorking for leaked secrets',
+        'vuln_deep':     'Deep vulnerability scan (Nuclei + XSS/SQLi/SSRF/CORS/LFI/SSTI)',
+        'bug_discovery': 'Lightweight bug discovery pipeline (subdomain+endpoint+JS+fuzz)',
+        'all':           'Run deep + vuln_deep + bug_discovery in parallel',
     }
 
     print(f"\n{'='*70}")
     print(f"  SELECT SCAN MODE")
     print(f"{'='*70}")
     for i, (mode, desc) in enumerate(mode_descriptions.items(), 1):
-        print(f"  {i}. {mode:14s} - {desc}")
+        print(f"  {i:2d}. {mode:16s} - {desc}")
     print(f"{'='*70}")
 
+    n = len(mode_descriptions)
     while True:
         try:
-            choice = input("\nSelect mode [1-7] or name: ").strip().lower()
+            choice = input(f"\nSelect mode [1-{n}] or name: ").strip().lower()
         except EOFError:
             return 'deep'
 
@@ -382,7 +426,7 @@ def select_scan_mode(config: dict) -> str:
         if choice in mode_descriptions:
             return choice
 
-        safe_print(f"[!] Invalid choice: '{choice}'. Try 1-7 or a mode name.")
+        safe_print(f"[!] Invalid choice: '{choice}'. Try 1-{n} or a mode name.")
 
 
 # =============================================================================
@@ -391,7 +435,7 @@ def select_scan_mode(config: dict) -> str:
 
 
 def run_deep_mode(config: dict, targets: list, config_path: Path = None):
-    """Run deep comprehensive scan."""
+    """Run deep comprehensive scan with auto HTML report generation."""
     from scanners.deep_scan import DeepScanner, DeepScanConfig
 
     phases = config.get('phases', {})
@@ -457,6 +501,10 @@ def run_deep_mode(config: dict, targets: list, config_path: Path = None):
 
     scanner = DeepScanner(scan_config)
     scanner.run()
+
+    # Auto-generate HTML report if enabled
+    if config.get('output', {}).get('save_html', False):
+        _generate_html_reports(scan_config.output_dir)
 
     safe_print("\n[+] Deep scan complete!")
 
@@ -711,6 +759,193 @@ def run_parallel_mode(config: dict, targets: list):
 
 
 # =============================================================================
+# HTML REPORT HELPER
+# =============================================================================
+
+
+def _generate_html_reports(output_dir: Path):
+    """Auto-generate HTML reports from any JSON scan results found in output_dir."""
+    try:
+        from reporting.html_report import generate_html_report
+        json_files = list(output_dir.rglob('*.json'))
+        if not json_files:
+            return
+        safe_print(f"[*] Generating HTML reports for {len(json_files)} result files...")
+        import json
+        for jf in json_files:
+            try:
+                with open(jf) as f:
+                    data = json.load(f)
+                html_path = jf.with_suffix('.html')
+                generate_html_report(data, str(html_path))
+                safe_print(f"    [HTML] {html_path.name}")
+            except Exception as e:
+                safe_print(f"    [!] HTML report error for {jf.name}: {e}")
+    except ImportError as e:
+        safe_print(f"[!] HTML report module unavailable: {e}")
+
+
+# =============================================================================
+# NEW SCAN MODE RUNNERS
+# =============================================================================
+
+
+def run_osint_mode(config: dict, targets: list):
+    """Run comprehensive OSINT reconnaissance (WHOIS, emails, dorks, GitHub, cloud)."""
+    from discovery.osint_recon import OSINTRecon
+    import json
+
+    output_dir = _get_output_dir(config, 'osint')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    osint_cfg = _get_osint_config(config)
+
+    recon = OSINTRecon(config={'osint': osint_cfg})
+
+    for target in targets:
+        if SHUTDOWN:
+            break
+        safe_print(f"[*] OSINT recon for: {target}")
+        result = recon.run(target, output_dir=output_dir)
+        # Save JSON
+        out_file = output_dir / f"{target.replace('.', '_')}_osint.json"
+        with open(out_file, 'w') as f:
+            json.dump(result.to_dict(), f, indent=2)
+        safe_print(f"[+] OSINT complete: {result.total_findings()} findings → {out_file}")
+
+    # Auto HTML
+    if config.get('output', {}).get('save_html', False):
+        _generate_html_reports(output_dir)
+
+    safe_print("\n[+] OSINT mode complete!")
+
+
+def run_github_mode(config: dict, targets: list):
+    """Run GitHub/GitLab dorking for leaked secrets and credentials."""
+    from discovery.github_dorking import GitHubDorker, GitLabDorker, save_dork_results
+
+    output_dir = _get_output_dir(config, 'github')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    gh_cfg = _get_github_config(config)
+
+    github_token = gh_cfg.get('github_token') or None
+    gitlab_token = gh_cfg.get('gitlab_token') or None
+    max_results  = gh_cfg.get('max_results', 50)
+    rate_limit   = _get_rate_limit(config, 1)
+
+    gh_dorker = GitHubDorker(github_token=github_token, rate_limit=rate_limit)
+    gl_dorker = GitLabDorker(gitlab_token=gitlab_token, rate_limit=rate_limit) if gitlab_token else None
+
+    for target in targets:
+        if SHUTDOWN:
+            break
+        safe_print(f"[*] GitHub dorking: {target}")
+        gh_result = gh_dorker.dork_domain(target, max_results=max_results)
+        safe_print(f"    GitHub: {len(gh_result.findings)} findings")
+
+        # Save GitHub results
+        gh_out = output_dir / f"{target.replace('.', '_')}_github.json"
+        save_dork_results(gh_result, str(gh_out))
+
+        if gl_dorker:
+            safe_print(f"[*] GitLab dorking: {target}")
+            gl_result = gl_dorker.dork_domain(target)
+            safe_print(f"    GitLab: {len(gl_result.findings)} findings")
+            gl_out = output_dir / f"{target.replace('.', '_')}_gitlab.json"
+            save_dork_results(gl_result, str(gl_out))
+
+    if config.get('output', {}).get('save_html', False):
+        _generate_html_reports(output_dir)
+
+    safe_print("\n[+] GitHub dorking complete!")
+
+
+def run_vuln_deep_mode(config: dict, targets: list):
+    """Run deep vulnerability scan: Nuclei + XSS + SQLi + SSRF + CORS + LFI + SSTI + more."""
+    from analysis.vuln_deep_scan import VulnDeepScanner
+    import json
+
+    output_dir = _get_output_dir(config, 'vuln_deep')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    vuln_cfg = _get_vuln_deep_config(config)
+
+    # Merge with nuclei config if present
+    nuclei_cfg = _get_nuclei_config(config)
+    if nuclei_cfg:
+        vuln_cfg['nuclei_config'] = nuclei_cfg
+
+    scanner = VulnDeepScanner(config={'vulnerability_scan': vuln_cfg})
+
+    for target in targets:
+        if SHUTDOWN:
+            break
+        target_url = target if target.startswith('http') else f'https://{target}'
+        safe_print(f"[*] Deep vuln scan: {target_url}")
+        result = scanner.run(
+            target=target_url,
+            live_urls=[target_url],
+            output_dir=output_dir
+        )
+        # Save JSON summary
+        out_file = output_dir / f"{target.replace('.', '_')}_vulns.json"
+        with open(out_file, 'w') as f:
+            json.dump(result.to_dict(), f, indent=2)
+        sev = result.to_dict().get('summary', {})
+        safe_print(
+            f"[+] {target}: critical={sev.get('critical',0)} high={sev.get('high',0)} "
+            f"medium={sev.get('medium',0)} → {out_file}"
+        )
+
+    if config.get('output', {}).get('save_html', False):
+        _generate_html_reports(output_dir)
+
+    safe_print("\n[+] Deep vulnerability scan complete!")
+
+
+def run_bug_discovery_mode(config: dict, targets: list):
+    """Run lightweight bug discovery pipeline: subdomain+endpoint+tech+JS+fuzz."""
+    from discovery.bug_discovery import run_full_discovery
+
+    output_dir = _get_output_dir(config, 'bug_discovery')
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    phases = config.get('phases', {})
+    skip_phases = []
+    phase_map = {
+        'subdomain_discovery': 'subdomain',
+        'tech_detection':      'tech',
+        'js_analysis':         'js',
+        'param_fuzzing':       'fuzzing',
+        'endpoint_discovery':  'endpoints',
+    }
+    for cfg_key, phase_name in phase_map.items():
+        if not _phase_enabled(phases, cfg_key, True):
+            skip_phases.append(phase_name)
+
+    program  = _get_program(config)
+    username = _get_username(config)
+
+    for target in targets:
+        if SHUTDOWN:
+            break
+        safe_print(f"[*] Bug discovery pipeline: {target}")
+        target_dir = output_dir / target.replace('.', '_')
+        target_dir.mkdir(parents=True, exist_ok=True)
+        run_full_discovery(
+            target=target,
+            program=program or 'generic',
+            username=username or 'researcher',
+            output_dir=target_dir,
+            skip_phases=skip_phases if skip_phases else None,
+        )
+        safe_print(f"[+] Bug discovery complete for {target}")
+
+    if config.get('output', {}).get('save_html', False):
+        _generate_html_reports(output_dir)
+
+    safe_print("\n[+] Bug discovery mode complete!")
+
+
+# =============================================================================
 # "ALL" MODE - Run multiple scanners in parallel
 # =============================================================================
 
@@ -784,18 +1019,21 @@ def _run_vuln_v2(config: dict, targets: list, output_dir: Path):
 def run_all_mode(config: dict, targets: list, config_path: Path = None):
     """Run multiple scanners in parallel and auto-aggregate results."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    import sys as _sys
 
     output_dir = _get_output_dir(config)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Determine which scanners to run
-    parallel_scanners = config.get('parallel_scanners', ['deep', 'webhack2025', 'vuln_v2'])
+    parallel_scanners = config.get('parallel_scanners', ['deep', 'vuln_deep', 'bug_discovery'])
 
     scanner_funcs = {
-        'deep': lambda: run_deep_mode(config, targets, config_path),
-        'webhack2025': lambda: _run_webhack2025(config, targets, output_dir),
-        'vuln_v2': lambda: _run_vuln_v2(config, targets, output_dir),
+        'deep':          lambda: run_deep_mode(config, targets, config_path),
+        'webhack2025':   lambda: _run_webhack2025(config, targets, output_dir),
+        'vuln_v2':       lambda: _run_vuln_v2(config, targets, output_dir),
+        'vuln_deep':     lambda: run_vuln_deep_mode(config, targets),
+        'bug_discovery': lambda: run_bug_discovery_mode(config, targets),
+        'osint':         lambda: run_osint_mode(config, targets),
+        'github':        lambda: run_github_mode(config, targets),
     }
 
     safe_print(f"[*] Running {len(parallel_scanners)} scanners in parallel: {', '.join(parallel_scanners)}")
@@ -825,7 +1063,7 @@ def run_all_mode(config: dict, targets: list, config_path: Path = None):
     # Auto-aggregate results
     safe_print("\n[*] Auto-aggregating results from all scanners...")
     try:
-        _sys.path.insert(0, str(Path(__file__).parent / 'tools'))
+        sys.path.insert(0, str(Path(__file__).parent / 'tools'))
         from aggregate_results import aggregate_results
         aggregate_results(output_dir)
     except Exception as e:
@@ -844,14 +1082,20 @@ def run_all_mode(config: dict, targets: list, config_path: Path = None):
 
 # MODE_RUNNERS: map scan_mode to runner function
 MODE_RUNNERS = {
-    'deep': run_deep_mode,
-    'fullrecon': run_fullrecon_mode,
-    'intelligent': run_intelligent_mode,
-    'continuous': run_continuous_mode,
-    'recon': run_recon_mode,
-    'discover': run_discover_mode,
-    'parallel': run_parallel_mode,
-    'all': run_all_mode,
+    # Existing modes
+    'deep':          run_deep_mode,
+    'fullrecon':     run_fullrecon_mode,
+    'intelligent':   run_intelligent_mode,
+    'continuous':    run_continuous_mode,
+    'recon':         run_recon_mode,
+    'discover':      run_discover_mode,
+    'parallel':      run_parallel_mode,
+    'all':           run_all_mode,
+    # New modes
+    'osint':         run_osint_mode,
+    'github':        run_github_mode,
+    'vuln_deep':     run_vuln_deep_mode,
+    'bug_discovery': run_bug_discovery_mode,
 }
 
 
@@ -924,6 +1168,7 @@ Override config path:
             runner(config, targets, config_path)
         else:
             runner(config, targets)
+
     except KeyboardInterrupt:
         safe_print("\n\n[!] Scan interrupted by user")
         sys.exit(0)
