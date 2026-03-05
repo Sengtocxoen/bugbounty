@@ -2,8 +2,8 @@
 """
 External Scanners Module
 ========================
-Wrapper for nikto, wapiti, and nuclei (fixed invocation).
-Each tool runs as a subprocess with configurable timeouts.
+Wrapper for nikto, wapiti, nuclei, and Burp Suite Professional.
+Each tool runs as a subprocess (or REST API) with configurable timeouts.
 Results are parsed into a unified format.
 """
 
@@ -21,7 +21,7 @@ logger = logging.getLogger('ExternalScanners')
 
 
 class ExternalScanners:
-    """Orchestrates nikto, wapiti, and nuclei scans with unified output."""
+    """Orchestrates nikto, wapiti, nuclei, and Burp Suite Pro scans with unified output."""
 
     def __init__(self, output_dir: Path, config: Optional[Dict[str, Any]] = None):
         self.output_dir = Path(output_dir)
@@ -341,6 +341,118 @@ class ExternalScanners:
         return findings
 
     # ------------------------------------------------------------------
+    # Burp Suite Professional (headless via REST API)
+    # ------------------------------------------------------------------
+    def run_burp(self, target: str, output_dir: Path,
+                 timeout: int = 3600) -> List[Dict]:
+        """Run Burp Suite Professional headless scan via REST API.
+
+        Auto-launches Burp if jar_path is configured and API isn't running.
+        """
+        findings: List[Dict] = []
+
+        try:
+            from scanners.burp_wrapper import BurpProAPI, BurpReportParser, launch_burp
+        except ImportError:
+            logger.error("[burp] burp_wrapper module not found — skipping")
+            return findings
+
+        # Get Burp config
+        burp_cfg = self.config.get('burp_suite', {})
+        api_url = burp_cfg.get('api_url', 'http://localhost:8090')
+        api_key = burp_cfg.get('api_key', '')
+        scan_type = burp_cfg.get('scan_type', 'active')
+        spider_timeout = burp_cfg.get('spider_timeout', 600)
+        scan_timeout = burp_cfg.get('timeout', timeout)
+        report_format = burp_cfg.get('report_format', 'XML')
+        jar_path = burp_cfg.get('jar_path', '')
+        api_jar_path = burp_cfg.get('api_jar_path', '')
+
+        url = target if target.startswith('http') else f"https://{target}"
+
+        # Connect to Burp REST API
+        api = BurpProAPI(api_url=api_url, api_key=api_key)
+        self._burp_process = None  # Track auto-launched process
+
+        if not api.is_alive():
+            # Auto-launch Burp if jar paths are configured
+            if jar_path:
+                logger.info(f"[burp] API not running — auto-launching Burp Pro...")
+                # Extract port from api_url
+                try:
+                    from urllib.parse import urlparse as _urlparse
+                    port = _urlparse(api_url).port or 8090
+                except Exception:
+                    port = 8090
+
+                self._burp_process = launch_burp(
+                    jar_path=jar_path,
+                    api_jar_path=api_jar_path,
+                    port=port,
+                    headless=True,
+                )
+                if self._burp_process and api.is_alive():
+                    logger.info(f"[burp] Auto-launched Burp Pro successfully")
+                else:
+                    logger.error("[burp] Auto-launch failed — skipping Burp scan")
+                    return findings
+            else:
+                logger.error(
+                    f"[burp] REST API not reachable at {api_url}. "
+                    f"Either start it manually or set jar_path in config for auto-launch."
+                )
+                return findings
+
+        logger.info(f"[burp] Connected to Burp Pro at {api_url}")
+
+        # Run full scan
+        result = api.run_full_scan(
+            target_url=url,
+            scan_type=scan_type,
+            spider_timeout=spider_timeout,
+            scan_timeout=scan_timeout,
+        )
+
+        if result['errors']:
+            for err in result['errors']:
+                logger.warning(f"[burp] {err}")
+
+        # Parse findings from REST API issues
+        if result['issues']:
+            parsed = BurpReportParser.parse_issues_json(result['issues'])
+            for f in parsed:
+                f['tool'] = 'burp_suite_pro'
+                findings.append(f)
+
+        # Also download and save full report
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report = api.get_report(
+            report_type=report_format,
+            url_prefix=url
+        )
+        if report:
+            import re as _re
+            safe = _re.sub(r'[^a-zA-Z0-9._-]', '_', target)
+            ext = 'xml' if report_format.upper() == 'XML' else 'html'
+            report_path = output_dir / f'burp_report_{safe}.{ext}'
+            try:
+                with open(report_path, 'w', encoding='utf-8') as fh:
+                    fh.write(report)
+                logger.info(f"[burp] Report saved: {report_path}")
+
+                # If XML, also parse findings from the report
+                if report_format.upper() == 'XML' and not findings:
+                    parsed = BurpReportParser.parse_xml(report)
+                    for f in parsed:
+                        f['tool'] = 'burp_suite_pro'
+                        findings.append(f)
+            except OSError as e:
+                logger.error(f"[burp] Report save error: {e}")
+
+        logger.info(f"[burp] {len(findings)} findings for {target}")
+        return findings
+
+    # ------------------------------------------------------------------
     # Orchestrator
     # ------------------------------------------------------------------
     def scan_all(self, targets: List[str], output_dir: Path,
@@ -356,11 +468,11 @@ class ExternalScanners:
             nuclei_targets: Expanded URL list for nuclei (root URLs + discovered
                             endpoints + API endpoints). If None, uses targets.
 
-        Returns dict with keys: nikto, wapiti, nuclei, all_findings, summary.
+        Returns dict with keys: nikto, wapiti, nuclei, burp, all_findings, summary.
         """
         cfg = config or self.config
         results: Dict[str, Any] = {
-            'nikto': [], 'wapiti': [], 'nuclei': [],
+            'nikto': [], 'wapiti': [], 'nuclei': [], 'burp': [],
             'all_findings': [], 'summary': {},
         }
 
@@ -396,6 +508,65 @@ class ExternalScanners:
             results['nuclei'].extend(r)
             results['all_findings'].extend(r)
 
+        # --- Pre-Burp Summary ---
+        burp_cfg = cfg.get('burp_suite', {})
+        if burp_cfg.get('enabled', False):
+            pre_burp_duration = (datetime.now() - scan_start).total_seconds()
+            pre_count = len(results['all_findings'])
+
+            # Count severities from pre-Burp findings
+            pre_sev: Dict[str, int] = {}
+            for f in results['all_findings']:
+                s = f.get('severity', 'info').lower()
+                pre_sev[s] = pre_sev.get(s, 0) + 1
+
+            logger.info(f"\n{'='*60}")
+            logger.info(f"  PRE-BURP FINDINGS SUMMARY")
+            logger.info(f"{'='*60}")
+            logger.info(f"  Time elapsed : {pre_burp_duration:.1f}s")
+            logger.info(f"  Total issues : {pre_count}")
+            logger.info(f"  By tool:")
+            logger.info(f"    nikto  : {len(results['nikto'])}")
+            logger.info(f"    wapiti : {len(results['wapiti'])}")
+            logger.info(f"    nuclei : {len(results['nuclei'])}")
+            logger.info(f"  By severity:")
+            for sev in ['critical', 'high', 'medium', 'low', 'info']:
+                if pre_sev.get(sev, 0) > 0:
+                    logger.info(f"    {sev:10s}: {pre_sev[sev]}")
+
+            # Show top findings (high/critical)
+            high_findings = [f for f in results['all_findings']
+                            if f.get('severity', '').lower() in ('critical', 'high')]
+            if high_findings:
+                logger.info(f"  Top findings (critical/high):")
+                for hf in high_findings[:10]:
+                    tool = hf.get('tool', '?')
+                    title = hf.get('title', hf.get('vuln_type', 'Unknown'))[:60]
+                    sev = hf.get('severity', 'unknown').upper()
+                    logger.info(f"    [{sev}] ({tool}) {title}")
+                if len(high_findings) > 10:
+                    logger.info(f"    ... and {len(high_findings) - 10} more")
+
+            logger.info(f"{'='*60}")
+            logger.info(f"  Starting Burp Suite Professional scan...")
+            logger.info(f"{'='*60}\n")
+
+            # --- Burp Suite Pro (per root target via REST API) ---
+            burp_dir = output_dir / 'burp'
+            for t in targets:
+                url = t if t.startswith('http') else f"https://{t}"
+                r = self.run_burp(url, burp_dir)
+                results['burp'].extend(r)
+                results['all_findings'].extend(r)
+
+            # Shutdown auto-launched Burp process if we started one
+            if hasattr(self, '_burp_process') and self._burp_process:
+                try:
+                    self._burp_process.terminate()
+                    logger.info("[burp] Auto-launched Burp process terminated")
+                except Exception:
+                    pass
+
         scan_end = datetime.now()
         duration = (scan_end - scan_start).total_seconds()
 
@@ -418,6 +589,7 @@ class ExternalScanners:
                 'nikto': len(results['nikto']),
                 'wapiti': len(results['wapiti']),
                 'nuclei': len(results['nuclei']),
+                'burp': len(results['burp']),
             },
         }
 
@@ -432,7 +604,8 @@ class ExternalScanners:
         logger.info(
             f"[external_scanners] Done: {len(results['all_findings'])} total findings "
             f"in {duration:.1f}s (nikto={len(results['nikto'])}, "
-            f"wapiti={len(results['wapiti'])}, nuclei={len(results['nuclei'])})"
+            f"wapiti={len(results['wapiti'])}, nuclei={len(results['nuclei'])}, "
+            f"burp={len(results['burp'])})"
         )
 
         return results

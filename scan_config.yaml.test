@@ -384,6 +384,38 @@ advanced:
       framework_vulns: true
 
 # =============================================================================
+# BURP SUITE PROFESSIONAL (headless mode via REST API)
+# =============================================================================
+# Requires Burp Suite Professional license.
+# When enabled, Burp runs as Phase 12 of the deep scan pipeline.
+# It auto-launches headless and scans all discovered endpoints.
+burp_suite:
+  enabled: false
+  # REST API endpoint (burp-rest-api)
+  api_url: "http://localhost:8090"
+  api_key: ""
+  # Path to burpsuite_pro.jar (for auto-launch)
+  jar_path: ""
+  # Path to burp-rest-api standalone JAR (optional)
+  api_jar_path: ""
+  # Scan type: "spider_only", "passive", or "active"
+  scan_type: "active"
+  # Spider timeout in seconds
+  spider_timeout: 600
+  # Active scan timeout in seconds
+  timeout: 3600
+  # Report format: "XML" or "HTML"
+  report_format: "XML"
+
+# =============================================================================
+# EXTERNAL SCANNERS (Phase 9 — nikto, wapiti, nuclei)
+# =============================================================================
+external_scanners:
+  nikto: true
+  wapiti: true
+  nuclei: true
+
+# =============================================================================
 # LIMITS (0 = unlimited)
 # =============================================================================
 limits:

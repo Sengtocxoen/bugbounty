@@ -254,6 +254,21 @@ def _get_vuln_deep_config(config):
     })
 
 
+def _get_burp_config(config):
+    """Extract Burp Suite Professional configuration from config."""
+    return config.get('burp_suite', {
+        'enabled': False,
+        'api_url': 'http://localhost:8090',
+        'api_key': '',
+        'jar_path': '',
+        'api_jar_path': '',
+        'scan_type': 'active',
+        'spider_timeout': 600,
+        'timeout': 3600,
+        'report_format': 'XML',
+    })
+
+
 # =============================================================================
 # CORE FUNCTIONS
 # =============================================================================
@@ -367,6 +382,15 @@ def print_config_summary(config: dict, targets: list):
     if nuclei.get('enabled', False):
         severity = nuclei.get('severity', [])
         print(f"  Nuclei:      ON ({', '.join(severity)})")
+
+    # Show Burp Suite status
+    burp = _get_burp_config(config)
+    if burp.get('enabled', False):
+        api_url = burp.get('api_url', 'http://localhost:8090')
+        scan_type = burp.get('scan_type', 'active')
+        print(f"  Burp Suite:  ON ({api_url}, {scan_type})")
+    else:
+        print(f"  Burp Suite:  OFF")
 
     print(f"{'='*70}\n")
 

@@ -6,7 +6,7 @@ The vulnerability verification system automatically confirms potential security 
 
 ## Features
 
-### 8 Specialized Verifiers
+### 10 Specialized Verifiers + 1 Orchestrator
 
 1. **Redirect Verifier** - Follows HTTP redirects to confirm endpoint accessibility
 2. **Service Verifier** - Tests exposed services (RDP, Redis, SSH, FTP, MySQL) for authentication requirements
@@ -16,6 +16,8 @@ The vulnerability verification system automatically confirms potential security 
 6. **Admin Verifier** - Tests admin panel accessibility and default credentials
 7. **API Verifier** - Validates API endpoints and documentation exposure
 8. **Backup Verifier** - Detects exposed database dumps and sensitive archives
+9. **Nuclei Scanner** - Template-based verification with tech-aware template selection
+10. **OOB Detector** - DNS/HTTP callback confirmation for blind vulnerabilities
 
 ## Usage
 
@@ -123,7 +125,9 @@ pip install requests beautifulsoup4
 ```
 tools/verification/
 ├── __init__.py               # Base classes (BaseVerifier, VerificationResult)
-├── verification_manager.py   # Orchestrator
+├── verification_manager.py   # Orchestrator - routes findings to verifiers
+├── nuclei_scanner.py        # Template-based verification
+├── oob_detector.py          # OOB callback listener (interact.sh)
 ├── redirect_verifier.py      # HTTP redirect follower
 ├── service_verifier.py       # Port/service tester
 ├── git_verifier.py          # .git exposure checker

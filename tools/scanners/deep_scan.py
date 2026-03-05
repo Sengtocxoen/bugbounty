@@ -1482,6 +1482,204 @@ class DeepScanner:
             f"{len(result.taint_paths)} taint paths", "SUCCESS"
         )
 
+    # ======================== PHASE 12: BURP SUITE PROFESSIONAL ==============
+
+    def phase_burp_suite(self, target: str, result: DeepScanResult):
+        """
+        Phase 12: Burp Suite Professional headless scan via REST API.
+        Runs AFTER all other phases so it can target discovered endpoints.
+        Prints a pre-Burp findings summary before launching.
+        """
+        # Check if Burp is enabled in config
+        burp_cfg = {}
+        if hasattr(self.config, '_full_config') and self.config._full_config:
+            burp_cfg = self.config._full_config.get('burp_suite', {})
+        elif self.config.config_file and self.config.config_file.exists():
+            try:
+                import yaml as _yaml
+                with open(self.config.config_file) as f:
+                    full_config = _yaml.safe_load(f)
+                    burp_cfg = full_config.get('burp_suite', {})
+            except Exception:
+                pass
+
+        if not burp_cfg.get('enabled', False):
+            return
+
+        self.phase_header(12, "BURP SUITE PROFESSIONAL", target)
+
+        # --- Pre-Burp Findings Summary ---
+        vuln_count = len(result.vulnerabilities)
+        issue_count = len(result.potential_issues)
+        chain_count = len(result.vuln_chains)
+        verified_count = len(result.verified_findings)
+
+        sev_counts = {}
+        for v in result.vulnerabilities:
+            s = v.get('severity', 'info').lower()
+            sev_counts[s] = sev_counts.get(s, 0) + 1
+
+        self.log(f"{'='*60}")
+        self.log(f"  PRE-BURP FINDINGS SUMMARY")
+        self.log(f"{'='*60}")
+        self.log(f"  Vulnerabilities : {vuln_count}")
+        self.log(f"  Potential Issues: {issue_count}")
+        self.log(f"  Verified        : {verified_count}")
+        self.log(f"  Exploit Chains  : {chain_count}")
+        if sev_counts:
+            self.log(f"  By severity:")
+            for sev in ['critical', 'high', 'medium', 'low', 'info']:
+                if sev_counts.get(sev, 0) > 0:
+                    self.log(f"    {sev:10s}: {sev_counts[sev]}")
+
+        # Show top critical/high findings
+        high_findings = [v for v in result.vulnerabilities
+                        if v.get('severity', '').lower() in ('critical', 'high')]
+        if high_findings:
+            self.log(f"  Top findings (critical/high):")
+            for hf in high_findings[:5]:
+                title = hf.get('vuln_name', hf.get('vuln_type', 'Unknown'))[:60]
+                sev = hf.get('severity', 'unknown').upper()
+                self.log(f"    [{sev}] {title}")
+            if len(high_findings) > 5:
+                self.log(f"    ... and {len(high_findings) - 5} more")
+
+        self.log(f"{'='*60}")
+        self.log(f"  Starting Burp Suite Professional scan...")
+        self.log(f"{'='*60}")
+
+        # --- Run Burp ---
+        try:
+            from scanners.burp_wrapper import BurpProAPI, BurpReportParser, launch_burp
+
+            api_url = burp_cfg.get('api_url', 'http://localhost:8090')
+            api_key = burp_cfg.get('api_key', '')
+            scan_type = burp_cfg.get('scan_type', 'active')
+            spider_timeout = burp_cfg.get('spider_timeout', 600)
+            scan_timeout = burp_cfg.get('timeout', 3600)
+            report_format = burp_cfg.get('report_format', 'XML')
+            jar_path = burp_cfg.get('jar_path', '')
+            api_jar_path = burp_cfg.get('api_jar_path', '')
+
+            url = self._build_url(target)
+            api = BurpProAPI(api_url=api_url, api_key=api_key)
+            burp_process = None
+
+            # Auto-launch if not running
+            if not api.is_alive():
+                if jar_path:
+                    self.log("Burp REST API not running — auto-launching...")
+                    try:
+                        from urllib.parse import urlparse as _urlparse
+                        port = _urlparse(api_url).port or 8090
+                    except Exception:
+                        port = 8090
+                    burp_process = launch_burp(
+                        jar_path=jar_path,
+                        api_jar_path=api_jar_path,
+                        port=port,
+                        headless=True,
+                    )
+                    if burp_process and api.is_alive():
+                        self.log("Burp Pro auto-launched successfully", "SUCCESS")
+                    else:
+                        self.log("Burp auto-launch failed — skipping", "ERROR")
+                        result.errors.append("Burp Suite auto-launch failed")
+                        return
+                else:
+                    self.log(
+                        f"Burp REST API not reachable at {api_url}. "
+                        f"Set jar_path in config for auto-launch.", "ERROR"
+                    )
+                    result.errors.append(f"Burp REST API not reachable at {api_url}")
+                    return
+
+            self.log(f"Connected to Burp Pro at {api_url}", "SUCCESS")
+
+            # Run full scan
+            scan_result = api.run_full_scan(
+                target_url=url,
+                scan_type=scan_type,
+                spider_timeout=spider_timeout,
+                scan_timeout=scan_timeout,
+            )
+
+            if scan_result.get('errors'):
+                for err in scan_result['errors']:
+                    self.log(f"Burp warning: {err}", "WARNING")
+
+            # Parse findings
+            burp_findings = []
+            if scan_result.get('issues'):
+                parsed = BurpReportParser.parse_issues_json(scan_result['issues'])
+                for f in parsed:
+                    f['tool'] = 'burp_suite_pro'
+                    burp_findings.append(f)
+
+            # Save report
+            safe_target = target.replace("://", "_").replace("/", "_").replace(":", "_")
+            burp_dir = self.config.output_dir / safe_target / "burp"
+            burp_dir.mkdir(parents=True, exist_ok=True)
+
+            report = api.get_report(report_type=report_format, url_prefix=url)
+            if report:
+                import re as _re
+                safe = _re.sub(r'[^a-zA-Z0-9._-]', '_', target)
+                ext = 'xml' if report_format.upper() == 'XML' else 'html'
+                report_path = burp_dir / f'burp_report_{safe}.{ext}'
+                try:
+                    with open(report_path, 'w', encoding='utf-8') as fh:
+                        fh.write(report)
+                    self.log(f"Burp report saved: {report_path}", "SUCCESS")
+                except OSError as e:
+                    self.log(f"Burp report save error: {e}", "ERROR")
+
+            # Merge Burp findings into main vulnerabilities
+            for finding in burp_findings:
+                result.vulnerabilities.append({
+                    "vuln_type": "burp_suite_finding",
+                    "vuln_name": finding.get("title", "Burp Finding"),
+                    "severity": finding.get("severity", "info"),
+                    "target": finding.get("url", target),
+                    "url": finding.get("url", ""),
+                    "parameter": finding.get("parameter", ""),
+                    "payload": "",
+                    "description": finding.get("description", ""),
+                    "evidence": finding.get("evidence", ""),
+                    "confidence": finding.get("confidence", "medium"),
+                    "tool": "burp_suite_pro",
+                    "category": finding.get("category", ""),
+                })
+
+            # Store Burp scan metadata
+            result.external_scan = result.external_scan or {}
+            result.external_scan['burp'] = {
+                'findings': len(burp_findings),
+                'issues_total': len(scan_result.get('issues', [])),
+                'scan_type': scan_type,
+            }
+
+            # Cleanup auto-launched process
+            if burp_process:
+                try:
+                    burp_process.terminate()
+                    self.log("Auto-launched Burp process terminated")
+                except Exception:
+                    pass
+
+            result.phases_completed.append("burp_suite")
+            self.log(
+                f"Burp Suite scan complete: {len(burp_findings)} findings",
+                "SUCCESS"
+            )
+
+        except ImportError:
+            self.log("burp_wrapper module not found — skipping Burp phase", "WARNING")
+        except Exception as e:
+            result.errors.append(f"Burp Suite error: {str(e)}")
+            self.log(f"Burp Suite error: {e}", "ERROR")
+            traceback.print_exc()
+
     # ======================== PHASE 10: VERIFICATION ========================
 
     def phase_verification(self, result: DeepScanResult):
@@ -1623,6 +1821,12 @@ class DeepScanner:
                 return result
             self.phase_vuln_chain_analysis(result)
 
+            # Phase 12: Burp Suite Professional (if enabled)
+            if self.check_shutdown():
+                result.scan_end = datetime.utcnow().isoformat()
+                return result
+            self.phase_burp_suite(target, result)
+
         except Exception as e:
             result.errors.append(f"Fatal error: {str(e)}")
             self.log(f"Fatal error during scan: {e}", "ERROR")
@@ -1712,6 +1916,9 @@ class DeepScanner:
                         "dom_sinks": len(result.dom_sinks),
                         "vulnerabilities": len(result.vulnerabilities),
                         "potential_issues": len(result.potential_issues),
+                        "verified_findings": len(result.verified_findings),
+                        "vuln_chains": len(result.vuln_chains),
+                        "taint_paths": len(result.taint_paths),
                         "cloud_buckets": len(result.cloud_buckets),
                         "waf_detected": result.waf_info.get("detected", False),
                         "total_requests": result.total_requests,
@@ -1734,6 +1941,10 @@ class DeepScanner:
                     "dom_sinks": result.dom_sinks,
                     "vulnerabilities": result.vulnerabilities,
                     "potential_issues": result.potential_issues,
+                    "verified_findings": result.verified_findings,
+                    "verification_summary": result.verification_summary,
+                    "vuln_chains": result.vuln_chains,
+                    "taint_paths": result.taint_paths,
                     "external_scan": result.external_scan,
                     "errors": result.errors,
                 }
@@ -1902,27 +2113,46 @@ class DeepScanner:
         total_secrets = 0
         total_sinks = 0
         total_subdomains = 0
+        total_verified = 0
+        total_chains = 0
+        total_burp = 0
 
         for target, result in self.results.items():
+            burp_count = 0
+            if result.external_scan and isinstance(result.external_scan, dict):
+                burp_info = result.external_scan.get('burp', {})
+                burp_count = burp_info.get('findings', 0) if isinstance(burp_info, dict) else 0
+
             print(f"\n  Target: {target}")
             print(f"  {'─'*40}")
             print(f"  Subdomains:    {result.subdomains_alive}/{result.subdomains_total} alive")
             print(f"  Endpoints:     {result.endpoints_total} ({result.endpoints_interesting} interesting)")
             print(f"  Vulns Found:   {len(result.vulnerabilities)}")
+            print(f"  Verified:      {len(result.verified_findings)}")
+            print(f"  Chains:        {len(result.vuln_chains)}")
             print(f"  Secrets:       {len(result.secrets_found)}")
             print(f"  DOM Sinks:     {len([s for s in result.dom_sinks if s.get('exploitable')])}")
+            if burp_count > 0:
+                print(f"  Burp Findings: {burp_count}")
 
             total_vulns += len(result.vulnerabilities)
             total_secrets += len(result.secrets_found)
             total_sinks += len([s for s in result.dom_sinks if s.get('exploitable')])
             total_subdomains += result.subdomains_alive
+            total_verified += len(result.verified_findings)
+            total_chains += len(result.vuln_chains)
+            total_burp += burp_count
 
         print(f"\n{'─'*80}")
         print(f"  TOTALS:")
         print(f"  Total Live Subdomains:       {total_subdomains}")
         print(f"  Total Vulnerabilities:       {total_vulns}")
+        print(f"  Total Verified Findings:     {total_verified}")
+        print(f"  Total Exploit Chains:        {total_chains}")
         print(f"  Total Secrets Found:         {total_secrets}")
         print(f"  Total Exploitable Sinks:     {total_sinks}")
+        if total_burp > 0:
+            print(f"  Total Burp Findings:         {total_burp}")
         print(f"\n  Results saved to: {self.config.output_dir}")
         print("="*80 + "\n")
 

@@ -285,7 +285,7 @@ nuclei_scan:
   nuclei_config_file: "nuclei-auth.yaml"
 
 # =============================================================================
-# EXTERNAL SCANNERS (nikto + wapiti + nuclei — used by phase 9 of deep scan)
+# EXTERNAL SCANNERS (nikto + wapiti + nuclei + burp — used by phase 9 of deep scan)
 # =============================================================================
 
 external_scanners:
@@ -313,6 +313,28 @@ external_scanners:
 
   # Same Nuclei config file used by standalone runner
   nuclei_config_file: "nuclei-auth.yaml"
+
+# =============================================================================
+# BURP SUITE PROFESSIONAL (headless via burp-rest-api)
+# =============================================================================
+# Prerequisites:
+#   1. burp-rest-api JAR: https://github.com/vmware/burp-rest-api
+#   2. Burp Suite Professional JAR + valid license
+#   3. Java 17+
+#   4. Start API: java -jar burp-rest-api.jar --burp.jar=burpsuite_pro.jar
+# =============================================================================
+
+burp_suite:
+  enabled: false                       # Set to true when Burp REST API is running
+  api_url: "http://localhost:8090"     # burp-rest-api endpoint
+  api_key: ""                          # API key (if configured in burp-rest-api)
+  jar_path: ""                         # Path to burpsuite_pro.jar (for auto-launch)
+  api_jar_path: ""                     # Path to burp-rest-api.jar (for auto-launch)
+  scan_type: "active"                  # "spider_only" | "passive" | "active"
+  spider_timeout: 600                  # Max spider time (seconds)
+  timeout: 3600                        # Max active scan time (seconds)
+  report_format: "XML"                 # "XML" or "HTML"
+
 
 # =============================================================================
 # GITHUB / GITLAB DORKING  (used by scan_mode: github)

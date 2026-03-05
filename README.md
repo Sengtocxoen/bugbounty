@@ -179,35 +179,53 @@ python scanner.py deep example.com -u my_h1_username --program shopify
 
 ## 📂 Project Structure
 
-### Core Modules
-- `scanner.py` - Main CLI entry point
-- `config_scanner.py` - YAML configuration loader
+### Core
+- `scanner.py` — Main CLI entry point (13 scan modes)
+- `scan_config.yaml` — Per-program configuration (gitignored)
 
 ### Tools Directory
-- **`tools/discovery/`** - Reconnaissance modules
-  - `cloud_enum.py` - AWS/Azure/GCP bucket enumeration
-  - `subdomain_discovery.py` - Subdomain discovery
-  - `github_dorking.py` - 🆕 GitHub/GitLab dorking for leaked secrets
-  
-- **`tools/analysis/`** - Analysis engines
-  - `js_analyzer.py` - Recursive JS analysis (enhanced with secret validation)
-  - `tech_detector.py` - Technology fingerprinting
-  - `graphql_introspection.py` - 🆕 GraphQL schema mapper
-  - `advanced_fuzzer.py` - 🆕 Recursive fuzzer with soft-404 detection
-  - `vuln_chainer.py` - 🆕 Vulnerability chaining engine
-  
-- **`tools/techniques/`** - Advanced attack techniques
-  - `waf_evasion.py` - WAF detection & bypass (enhanced with proxy rotation)
-  
-- **`tools/verification/`** - Verification modules
-  - `oob_detector.py` - Out-of-band detection (interact.sh)
-  
-- **`tools/utils/`** - Shared utilities
-  - `config.py` - Program configurations
-  - `scope.py` - Scope management
-  - `secret_patterns.py` - Secret detection patterns
-  - `response_dedup.py` - 🆕 Response deduplication system
-  - `secret_validator.py` - 🆕 Secret validation API
+- **`tools/discovery/`** — Reconnaissance (9 modules)
+  - `enhanced_subdomain_scanner.py`, `dns_deep_enum.py` — Subdomain enumeration
+  - `endpoint_discovery.py` — URL/API path hunting
+  - `cloud_enum.py` — S3/Azure/GCS bucket enumeration
+  - `service_checker.py` — Port/service fingerprinting
+  - `github_dorking.py` — GitHub/GitLab secret scanning
+  - `osint_recon.py` — WHOIS, emails, dorks, cloud intel
+
+- **`tools/analysis/`** — Intelligence & Analysis (13 modules)
+  - `js_analyzer.py` — Recursive JS analysis + secret validation
+  - `tech_detection.py` — Framework fingerprinting
+  - `param_fuzzer.py`, `advanced_fuzzer.py` — Parameter & directory fuzzing
+  - `graphql_introspection.py` — GraphQL schema mapping
+  - `vuln_chainer.py` — Vulnerability chaining engine
+  - `source_sink_mapper.py` — Taint analysis
+
+- **`tools/scanners/`** — Scanner Engines (9 modules)
+  - `deep_scan.py` — Comprehensive deep scanner
+  - `vuln_scanner_v2.py` — V2 vulnerability scanner
+  - `wiz_recon.py` — Wiz-style 5-phase recon
+  - `burp_wrapper.py` — Burp Suite Pro headless integration
+  - `external_scanners.py` — External tool orchestrator
+  - `parallel_scan.py`, `continuous_scanner.py`, `intelligent_scanner.py`
+
+- **`tools/techniques/`** — Attack Techniques
+  - `waf_evasion.py` — WAF detection & bypass
+  - `web_hacking_2025/` — 11 attack modules (SSRF, SSTI, XSS, auth bypass, smuggling, cache poisoning, XXE, deserialization, framework vulns, XS-leaks, protocol attacks)
+
+- **`tools/verification/`** — Finding Verification (11 verifiers)
+  - `verification_manager.py` — Orchestrator
+  - `nuclei_scanner.py`, `oob_detector.py`, `graphql_verifier.py`, `git_verifier.py`, `admin_verifier.py`, `api_verifier.py`, `backup_verifier.py`, `redirect_verifier.py`, `service_verifier.py`, `ssti_verifier.py`
+
+- **`tools/utils/`** — Shared Utilities (9 modules)
+  - `http_client.py` — HTTP client with evasion
+  - `scope_validator.py` — In-scope validation
+  - `response_dedup.py` — Response deduplication
+  - `secret_patterns.py`, `secret_validator.py` — Secret detection & validation
+
+- **`tools/reporting/`** — Report Generation
+  - `html_report.py` — HTML report builder
+
+> See [Architechture.md](Architechture.md) for full diagrams and [Feature.md](Feature.md) for capabilities.
 
 ## 📊 Performance Metrics
 
@@ -219,23 +237,29 @@ python scanner.py deep example.com -u my_h1_username --program shopify
 | Vulnerability Chaining | Auto-escalates **Medium → Critical** severity |
 | Adaptive Rate Limiting | **Zero blocks** on rate-limited targets |
 
-## 🆕 What's New (Maximum Capabilities Update)
+## 🆕 What's New
 
-- ✅ **Response Deduplication** - Skip similar page templates automatically
-- ✅ **Secret Validation** - Verify AWS keys, Firebase URLs, GitHub tokens are active
-- ✅ **GitHub Dorking** - Automated repository scanning for credential leaks
-- ✅ **GraphQL Introspection** - Complete schema mapping with security analysis
-- ✅ **Advanced Fuzzer** - Recursive directory discovery with smart filtering
-- ✅ **Vulnerability Chaining** - Auto-chain SSRF+IDOR, XSS+CSRF, LFI+RCE
-- ✅ **Enhanced WAF Evasion** - Proxy rotation, tamper scripts, parsing exploits
+- ✅ **Burp Suite Pro Integration** — Headless mode via REST API, passive/active scanning, Collaborator OOB
+- ✅ **Web Hacking 2025** — 11 attack technique modules (PortSwigger Top 10 inspired)
+- ✅ **11 Verification Modules** — Every finding verified before reporting
+- ✅ **Response Deduplication** — Skip similar page templates automatically
+- ✅ **Secret Validation** — Verify AWS keys, Firebase URLs, GitHub tokens are active
+- ✅ **GitHub Dorking** — Automated repository scanning for credential leaks
+- ✅ **GraphQL Introspection** — Complete schema mapping with security analysis
+- ✅ **Vulnerability Chaining** — Auto-chain SSRF+IDOR, XSS+CSRF, LFI+RCE
+- ✅ **Enhanced WAF Evasion** — Proxy rotation, tamper scripts, parsing exploits
 
-**Total New Code**: ~2,500 lines | **New Modules**: 7 | **Enhanced Modules**: 2
+**Total Modules**: 60+ | **Scanner Modes**: 13 | **Attack Techniques**: 11
 
 ## ⚠️ Disclaimer
 This tool is for **authorized bug bounty research only**. Ensure you have permission to scan the target. Follow all program rules and scoping guidelines.
 
-## 🤝 Contributing
-See `Agent.md` for the full methodology and architectural guidelines.
+## 📚 Documentation
+- [Architechture.md](Architechture.md) — Full system architecture, component diagrams, data flow
+- [Layer.md](Layer.md) — Execution layer stack (Environment → Burp → AI)
+- [Feature.md](Feature.md) — Complete feature compendium
+- [Agent.md](Agent.md) — Project manifesto & methodology
+- [SKILL.md](SKILL.md) — Vulnerability researcher skill definition
 
 ## 📝 License
 For authorized security research and bug bounty hunting only.
