@@ -594,7 +594,7 @@ def _validate_xss(resp: requests.Response, payload: str, canary: str) -> Tuple[b
         # e.g., inject: ';alert(1);// to break out of string
         js_ctx = re.search(r'(["\'])([^"\']*?)' + re.escape(search_term[:15]) + r'([^"\']*?)\1', content)
         if js_ctx:
-            return True, "XSS in JS string context: try payload '";alert(1);//' to escape string"
+            return True, "XSS in JS string context: try payload '\";alert(1);//' to escape string"
         return False, "Payload escaped in JS string"
 
     return True, "XSS reflection confirmed"

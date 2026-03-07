@@ -320,7 +320,7 @@ class AdvancedFuzzer:
     def save_session(self, session_file: str):
         """Save fuzzing session for resume"""
         if self.fuzz_session:
-            with open(session_ file, 'wb') as f:
+            with open(session_file, 'wb') as f:
                 pickle.dump(self.fuzz_session, f)
             print(f"[*] Session saved to: {session_file}")
     

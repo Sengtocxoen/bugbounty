@@ -1,0 +1,525 @@
+# Bug Bounty Scanner - DECA-DEV Internal Pentest Configuration
+# Target  : https://security-org.deca-dev.com
+# Owner   : Your own company (authorized internal pentest)
+# Created : 2026-03-07
+# Mode    : deep (all phases, maximum coverage, no rate-limit worries)
+# Run     : python scanner.py -c scan_config_deca.yaml
+
+# =============================================================================
+# PROGRAM & IDENTITY
+# =============================================================================
+
+program: "deca-dev-internal"
+
+# Your identifier (shows up in headers / logs)
+h1_username: "internal-pentest"
+
+# =============================================================================
+# SCAN MODE
+# Available: deep, fullrecon, intelligent, continuous, recon, discover,
+#            parallel, osint, github, vuln_deep, bug_discovery, all
+#
+# Recommendation:
+#   - First run  : "deep"       — full pipeline, one shot
+#   - Follow-up  : "vuln_deep"  — targeted vuln scan on found endpoints
+#   - Monitoring : "continuous" — ongoing change detection
+# =============================================================================
+
+scan_mode: "deep"
+
+# =============================================================================
+# TARGETS
+# security-org.deca-dev.com is the primary target.
+# deca-dev.com added so subdomain discovery can enumerate *.deca-dev.com
+# and find any sibling apps (staging, admin, api, etc.)
+# =============================================================================
+
+targets:
+  - "security-org.deca-dev.com"
+  - "deca-dev.com"
+
+# =============================================================================
+# CUSTOM HEADERS
+# Sent with every request — helps distinguish pentest traffic in your logs
+# =============================================================================
+
+custom_headers:
+  X-Pentest-Auth: "internal-authorized"
+  X-Requested-By: "security-team"
+  User-Agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+
+# =============================================================================
+# RATE LIMITING
+# It's your own server — go faster than normal bug bounty programs.
+# Keep it sane to avoid self-DoS on production. Adjust as needed.
+# =============================================================================
+
+rate_limit: 30            # Requests per second
+request_delay: 0.0        # No extra delay needed
+request_timeout: 30       # Seconds per request
+
+# =============================================================================
+# SCAN PHASES
+# All enabled for maximum internal coverage
+# =============================================================================
+
+phases:
+  # Enumerate *.deca-dev.com siblings — staging, admin, api, dev, etc.
+  subdomain_discovery: true
+
+  # Port scan — find non-standard ports (8080, 8443, 3000, 5000, etc.)
+  port_scanning: true
+
+  # Crawl all paths, parse robots.txt, sitemap.xml, link extraction
+  endpoint_discovery: true
+
+  # Fingerprint tech stack — drives targeted attack selection
+  tech_detection: true
+
+  # Recursive JS analysis — secrets, API endpoints, DOM sinks
+  js_analysis: true
+
+  # Fuzz all parameters for XSS, SQLi, SSRF, LFI, SSTI, RCE, XXE, CRLF
+  param_fuzzing: true
+
+  # Nuclei + individual vuln scanners
+  vulnerability_scanning: true
+
+  # Verify and chain all findings before reporting
+  verification: true
+
+# =============================================================================
+# ADVANCED FEATURES
+# =============================================================================
+
+advanced_features:
+  # Skip similar page templates — faster scan on apps with many product pages
+  response_dedup:
+    enabled: true
+    similarity_threshold: 0.85
+
+  # Validate any secrets found in JS / source code
+  secret_validation:
+    enabled: true
+    validate_aws: true
+    validate_firebase: true
+    validate_github: true
+    validate_google: true
+    validate_slack: true
+
+  # GitHub dorking on deca-dev org — find leaked secrets in public repos
+  github_dorking:
+    enabled: true
+    github_token: null        # Add your token: "ghp_xxxx" for higher rate limits
+    gitlab_token: null
+    max_results: 100
+    target_orgs:
+      - "deca-dev"
+    search_passwords: true
+    search_api_keys: true
+    search_tokens: true
+    search_internal_urls: true
+    search_env_files: true
+
+  # Auto-detect GraphQL endpoints and map schema
+  graphql:
+    enabled: true
+    auto_detect: true
+    introspect_authenticated: true
+    test_batch_queries: true
+    test_field_suggestions: true
+    test_alias_overloading: true
+    test_deep_recursion: true
+
+  # Recursive directory fuzzing — depth 3, header injection, soft-404 filter
+  fuzzing:
+    recursive: true
+    max_depth: 3
+    header_fuzz: true
+    soft_404_detection: true
+    wordlist: null            # null = use built-in; set path for custom wordlist
+
+  # Auto-chain low findings into critical impact
+  vuln_chaining:
+    enabled: true
+    auto_escalate: true
+    chain_ssrf_idor: true
+    chain_xss_csrf: true
+    chain_lfi_rce: true
+    chain_open_redirect_oauth: true
+
+  # WAF detection and payload evasion
+  waf_evasion:
+    proxy_rotation: false
+    proxy_list: []
+    tamper_payloads: true
+    adaptive_delay: true
+    encoding_bypass: true
+
+  # 2025 attack technique modules
+  web_hacking_2025:
+    enabled: true
+    techniques:
+      auth_bypass: true
+      cache_poison: true
+      xss_csrf: true
+      ssti_inject: true
+      parser_xxe: true
+      smuggling: true
+      ssrf: true
+      xs_leaks: true
+      framework_vulns: true
+      deserialization: true
+      protocol_attacks: true
+
+# =============================================================================
+# PHASE TIMEOUTS (0 = run until complete — recommended for internal pentest)
+# =============================================================================
+
+phase_timeouts:
+  js_analysis: 0
+  param_fuzzing: 0
+  endpoint_discovery: 0
+  nuclei_scan: 0
+  verification: 0
+  external_scanners: 0
+
+# =============================================================================
+# LIMITS (0 = unlimited)
+# =============================================================================
+
+limits:
+  max_subdomains: 0
+  max_endpoints: 0
+  max_js_files: 0
+  max_fuzz_urls: 0
+
+# =============================================================================
+# PORT SCANNING
+# =============================================================================
+
+port_scan:
+  full_scan: true
+  custom_ports:
+    - 80
+    - 443
+    - 8080
+    - 8443
+    - 8000
+    - 8888
+    - 3000
+    - 4000
+    - 5000
+    - 5432    # PostgreSQL
+    - 3306    # MySQL
+    - 6379    # Redis
+    - 27017   # MongoDB
+    - 9200    # Elasticsearch
+    - 9090    # Prometheus
+    - 2375    # Docker daemon (unauthenticated — high value)
+    - 2376    # Docker TLS
+    - 6443    # Kubernetes API
+    - 10250   # Kubernetes kubelet
+
+# =============================================================================
+# NUCLEI VULNERABILITY SCANNING
+# =============================================================================
+
+nuclei_scan:
+  enabled: true
+
+  # Scan everything — it's your own server
+  severity:
+    - critical
+    - high
+    - medium
+    - low
+    - info
+
+  # Broad tag coverage for internal pentest
+  tags:
+    - auth
+    - auth-bypass
+    - default-login
+    - exposure
+    - misconfig
+    - cors
+    - ssrf
+    - sqli
+    - xss
+    - idor
+    - jwt
+    - api
+    - graphql
+    - rce
+    - lfi
+    - ssti
+    - xxe
+    - redirect
+    - crlf
+    - prototype-pollution
+    - smuggling
+    - cache-poisoning
+    - deserialization
+    - panel
+    - backup
+    - config
+    - debug
+    - log
+    - token
+    - secret
+
+  # Nothing excluded on your own server
+  exclude_tags: []
+
+  custom_templates: null
+
+  scan_targets:
+    subdomains: true
+    endpoints: true
+    cloud_buckets: true
+    ports: true
+
+  rate_limit: 150
+  timeout: 0            # No timeout
+  threads: 25
+
+  update_templates: true
+
+  extra_flags:
+    - "-stats"
+    - "-duc"
+
+  include_request: true
+  include_response: true
+
+  custom_headers:
+    X-Pentest-Auth: "internal-authorized"
+
+# =============================================================================
+# EXTERNAL SCANNERS (nikto + wapiti + nuclei — Phase 9)
+# =============================================================================
+
+external_scanners:
+  nikto: true
+  wapiti: true
+  nuclei: true
+
+  severity:
+    - critical
+    - high
+    - medium
+    - low
+
+  exclude_tags: []
+
+  rate_limit: 150
+  threads: 5
+
+  custom_headers:
+    X-Pentest-Auth: "internal-authorized"
+
+# =============================================================================
+# BURP SUITE PROFESSIONAL
+# Enable if you have Burp Pro + burp-rest-api running
+# =============================================================================
+
+burp_suite:
+  enabled: false          # Set true when Burp REST API is up
+  api_url: "http://localhost:8090"
+  api_key: ""
+  jar_path: ""
+  api_jar_path: ""
+  scan_type: "active"
+  spider_timeout: 600
+  timeout: 3600
+  report_format: "XML"
+
+# =============================================================================
+# VERIFICATION
+# =============================================================================
+
+verification:
+  threads: 15
+  verify_only_high_priority: false
+  test_default_credentials: true    # OK on your own server — check for defaults
+
+# =============================================================================
+# DEEP VULNERABILITY SCAN (used by scan_mode: vuln_deep)
+# =============================================================================
+
+vulnerability_scan:
+  enabled: true
+  nuclei: true
+  xss: true
+  sqli: true
+  ssrf: true
+  cors: true
+  lfi: true
+  ssti: true
+  crlf: true
+  redirect: true
+  prototype_pollution: true
+  http_smuggling: true      # Enabled — your own server, no service disruption risk
+  cache_attacks: true
+
+# =============================================================================
+# GITHUB / GITLAB DORKING
+# =============================================================================
+
+github_dorking:
+  enabled: true
+  github_token: null        # "ghp_xxxx" — strongly recommended
+  gitlab_token: null
+  max_results: 100
+
+# =============================================================================
+# OSINT CONFIGURATION
+# =============================================================================
+
+osint:
+  whois: true
+  email_harvesting: true
+
+  google_dorks:
+    enabled: true
+    max_results: 100
+    queries:
+      - "site:deca-dev.com filetype:env"
+      - "site:deca-dev.com filetype:sql"
+      - "site:deca-dev.com filetype:log"
+      - "site:deca-dev.com filetype:bak"
+      - "site:deca-dev.com inurl:admin"
+      - "site:deca-dev.com inurl:api"
+      - "site:deca-dev.com inurl:debug"
+      - "site:deca-dev.com inurl:config"
+      - "site:security-org.deca-dev.com"
+      - "site:deca-dev.com ext:json"
+      - "site:deca-dev.com ext:yaml OR ext:yml"
+
+  repository_scanning:
+    target_org: "deca-dev"
+    enabled: true
+    tools:
+      - "trufflehog"
+      - "gitleaks"
+    deep_history: true
+
+# =============================================================================
+# CLOUD ENUMERATION
+# =============================================================================
+
+cloud_enum:
+  providers:
+    aws_s3: true
+    gcp_storage: true
+    azure_blob: true
+
+  bucket_patterns:
+    - "deca-dev"
+    - "deca"
+    - "security-org"
+    - "deca-dev-prod"
+    - "deca-dev-staging"
+    - "deca-dev-dev"
+    - "deca-dev-backup"
+    - "deca-dev-assets"
+    - "deca-dev-uploads"
+    - "deca-dev-static"
+    - "deca-dev-media"
+    - "deca-security"
+
+  test_permissions: true    # Check read/write/list access on every bucket
+
+# =============================================================================
+# OUTPUT
+# =============================================================================
+
+output:
+  directory: "results/deca-dev"
+  save_json: true
+  save_txt: true
+  save_html: true           # HTML report for easy review
+  verbose: true
+
+# =============================================================================
+# SAFETY
+# =============================================================================
+
+safety:
+  confirm_before_run: false   # No confirmation needed — authorized pentest
+  show_review: true
+  max_threads: 30
+
+# =============================================================================
+# SCOPE
+# Full scope — you own everything under deca-dev.com
+# =============================================================================
+
+scope:
+  in_scope:
+    - "security-org.deca-dev.com"
+    - "deca-dev.com"
+    - "*.deca-dev.com"
+
+  out_of_scope: []
+
+  exclude_patterns: []
+
+# =============================================================================
+# API KEYS — fill in yours for maximum coverage
+# =============================================================================
+
+api_keys:
+  shodan: null
+  censys_id: null
+  censys_secret: null
+  virustotal: null
+  securitytrails: null
+  binaryedge: null
+  github_token: null        # Strongly recommended for github dorking
+  gitlab_token: null
+  hunter_io: null
+  chaos: null
+  netlas: null
+
+# =============================================================================
+# NOTES
+# =============================================================================
+
+notes: |
+  DECA-DEV Internal Pentest Configuration
+  ========================================
+
+  TARGET:  https://security-org.deca-dev.com
+  SCOPE:   Full — all *.deca-dev.com assets
+  AUTH:    Internal authorized pentest
+
+  HOW TO RUN:
+    # Full deep scan (recommended first run)
+    python scanner.py -c scan_config_deca.yaml
+
+    # Targeted vuln scan only
+    scan_mode: "vuln_deep"  in this file, then re-run
+
+    # Continuous monitoring
+    scan_mode: "continuous"  in this file, then re-run
+
+  ATTACK PRIORITY FOR THIS TARGET:
+    1. Auth bypass / default credentials (test_default_credentials: true)
+    2. API endpoint discovery + IDOR
+    3. JS secrets — internal API keys, tokens
+    4. SSRF to internal network / cloud metadata
+    5. SQL injection on any forms/params
+    6. Exposed admin panels (nuclei panel tag)
+    7. Misconfigured S3/GCS/Azure buckets (cloud_enum)
+    8. GraphQL introspection + batch abuse
+    9. Subdomain takeover on *.deca-dev.com
+    10. Docker/Kubernetes exposure on non-standard ports
+
+  RESULTS:
+    results/deca-dev/deep/        — deep scan output
+    results/deca-dev/deep/*.html  — HTML reports
+    results/deca-dev/deep/*.json  — machine-readable findings
+
+  Last Updated: 2026-03-07
