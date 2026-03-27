@@ -128,6 +128,30 @@ SHOPIFY_BB = BugBountyConfig(
     }
 )
 
+# Slack Bug Bounty Configuration
+SLACK_BB = BugBountyConfig(
+    name="Slack Bug Bounty (Salesforce)",
+    user_agent_template="SecurityResearcher_{username}",
+    rate_limit=5.0,  # conservative - live production environment
+    email_format="{username}@wearehackerone.com",
+    scope_patterns=[
+        r".*\.slack\.com",
+        r".*\.slack-edge\.com",
+        r".*\.slackb\.com",
+        r".*\.quip\.com",
+    ],
+    out_of_scope_patterns=[
+        r".*test.*\.slack\.com",
+        r".*staging.*\.slack\.com",
+    ],
+    special_rules={
+        "quip_restriction": "Quip assets: Critical severity ONLY (policy effective 2023-12-01)",
+        "no_self_xss": "Self-XSS is out of scope",
+        "no_scanner_output": "Scanner output without functional PoC will not be rewarded",
+        "source_code_ref": "Reference source: Target/Slack/nebula (slackhq/nebula on GitHub)",
+    }
+)
+
 # Generic Bug Bounty Configuration
 GENERIC_BB = BugBountyConfig(
     name="Generic Bug Bounty",
@@ -146,6 +170,7 @@ GENERIC_BB = BugBountyConfig(
 PROGRAMS = {
     "amazon": AMAZON_VRP,
     "shopify": SHOPIFY_BB,
+    "slack": SLACK_BB,
     "generic": GENERIC_BB,
 }
 
@@ -163,6 +188,8 @@ def detect_program(domain: str) -> Optional[BugBountyConfig]:
         return AMAZON_VRP
     elif 'shopify' in domain_lower or 'myshopify' in domain_lower:
         return SHOPIFY_BB
+    elif 'slack' in domain_lower or 'quip' in domain_lower:
+        return SLACK_BB
 
     return GENERIC_BB
 
