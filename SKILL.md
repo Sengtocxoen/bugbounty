@@ -286,6 +286,7 @@ Search for every place where data becomes dangerous:
 | Prototype pollution | `_.merge()`, `deepmerge()`, `Object.assign()` on nested objects, recursive copy functions — if `__proto__` key reaches merge, attacker modifies `Object.prototype` → auth bypass or RCE via template gadget |
 | File system | `open(` with user path, `path.join(` + user input, `fs.readFile/writeFile`, `zipfile.extractall` (zip-slip) |
 | Template rendering | `render_template_string(`, Jinja2 `Environment(autoescape=False)`, server-side template injection, JSX `dangerouslySetInnerHTML` |
+| Document Generation | `puppeteer.launch`, `pdfKit`, `wkhtmltopdf` — rendering user HTML into PDF/images without disabling local file access or external network requests (SSRF/LFI) |
 | Redirects | `redirect(user_input)`, `Location:` header with user-controlled value, `window.location` assignment |
 | Cryptography | `hashlib.md5/sha1` for passwords, `Math.random()` (not `crypto.randomBytes`), `AES-ECB`, static IVs, `signatureVerify` without replay protection |
 | Memory / C-ext | `ctypes`, `cffi`, buffer operations without bounds checking, BigInt overflow |
@@ -431,7 +432,7 @@ For every sanitizer in the chain, ask:
 
 At every API boundary, test what happens with unexpected types:
 - Integer field → huge JSON array, float, string, negative, zero, MAX_SAFE_INTEGER+1, BigInt overflow
-- String field → JSON object `{}`, array `[]`, extremely long string (100KB+)
+- String field → JSON object `{}` (test NoSQL injection), array `[]`, extremely long string (100KB+)
 - Boolean field → `0`, `"false"`, `null`, `[]`, empty string
 - Expected array → single item (non-array), empty array, array with 10,000 items
 - BigInt/numeric string → NaN, Infinity, `-0`, scientific notation (`1e308`)
@@ -893,6 +894,8 @@ After each audit, extract any **new archetype** discovered and add it here. Each
 | A34 | **Arbitrary file deletion via unvalidated cleanup path** | Cleanup / garbage-collection code reads file paths from execution records, job metadata, or user-supplied filenames and passes them directly to `os.Remove`, `fs.rm`, `unlink`, or equivalent without path validation. Attacker supplies crafted filename (e.g., `../../app/config/secrets.yaml`) at creation time; cleanup later deletes the target file. | `grep -rn "os.Remove\|fs\.rm\|unlink\|os\.Unlink\|rimraf"` → check if the path argument originates from a stored record whose filename was user-supplied → verify the path is resolved to a safe base directory before deletion | 1, 3, 4 |
 | A35 | **Cross-tenant IDOR via missing org/workspace ownership check** | Service methods look up resources by ID alone (`GetFlowByID`, `GetByID`, `FindOne({id})`) without verifying that the returned resource belongs to the requesting tenant's org/workspace. Any authenticated user who knows or guesses another tenant's resource ID can access or execute it. Most common in sub-flow execution, asset references, template lookups, and shared-file references. | `grep -rn "GetBy.*ID\|FindByID\|findOne.*id\|GetFlowByID\|fetchById"` → check if there is an explicit org/workspace ownership assertion on the returned object after retrieval → look for patterns like `if result.OrgID != requestingOrgID { return error }` | 1, 3, 4 |
 | A36 | **Auth middleware registration order bug** | In web frameworks that apply middleware per route group (Gin, Echo, Fastify, Express, Hono), a route registered BEFORE `api.Use(authMiddleware)` runs without authentication — even if all subsequent routes are protected. Special-purpose endpoints (webhooks, callbacks, hooks) are frequently registered outside the guarded group to avoid auth friction, inadvertently making them public. | Read the main router/app file → map route registration order → identify any route registered before `app.Use(auth*)` or outside the protected group → test the endpoint with no Authorization header | 1, 3, 4 |
+| A37 | **NoSQL operator injection via object parsing** | Express/URL query parsers often decode `?id[$ne]=null` into an object `{ id: { $ne: null } }`. If passed unvalidated to MongoDB functions like `.find()`, string checks are bypassed. | `grep -rn "\.find(\|\.findOne(\|\.deleteOne("` → trace arguments back to `req.query` or `req.body` → verify `typeof` checking or schema validation is strictly enforced. | 3, 4 |
+| A38 | **SSRF/LFI via Server-Side Document Generation** | App dynamically creates PDFs or Images (e.g., invoices, profile cards) using headless browsers or HTML-to-PDF converters without isolating the environment. An attacker submits HTML containing `<iframe src="file:///etc/passwd">` or `<script>`, which is rendered server-side. | `grep -rn "puppeteer\|wkhtmltopdf\|pdf\|render\|html-to-pdf"` → trace rendered content to user-controlled HTML or Markdown → test local file access and external network connections. | 3, 4, 6 |
 
 ### How to Expand the Library
 
@@ -943,6 +946,8 @@ The library should grow with each audit until it covers all common patterns — 
 34. **Verify resource ownership after every `GetByID` call** — every service-layer lookup by ID must assert that the returned resource's org/tenant/workspace matches the requester's context. Missing this check is an IDOR even when the ID is a UUID.
 35. **Check route registration order for auth middleware** — in all major Go/Node.js frameworks, a route registered before `app.Use(authMiddleware)` or outside the protected group runs without auth. Read the main router file top-to-bottom and verify every sensitive route is enclosed within the auth-protected group.
 36. **SSRF sources include API response URLs** — a `fetch(response.data.url)` or URL fallback from a third-party API response is SSRF if the response origin is attacker-influenced or the URL is passed without private-IP/redirect validation. Do not limit SSRF scanning to direct user-input URL fields.
+37. **Test for NoSQL operator injection in query/body objects** — anytime a framework automatically unmarshals JSON or extended query strings into nested objects, try inserting operators like `$ne`, `$gt`, and `$in` in place of strings.
+38. **Document and image generation are execution sinks** — headless browsers (Puppeteer, Playwright) or PDF converters (wkhtmltopdf) parsing user-controlled layout/content easily lead to LFI, SSRF, or even RCE if internal features aren't strictly disabled. Test them like a reverse proxy.
 
 ---
 
