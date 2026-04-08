@@ -5,6 +5,17 @@
 
 ---
 
+## Section 0 — Empirical Grounding (SKILL_BB.md Step 2 — run this first)
+These checks block the review if failed. A finding with hallucinated evidence wastes everyone's time.
+
+- [ ] **Is every claim backed by actual tool output or HTTP response?** (No "this probably works" or "the code looks like it could...")
+- [ ] **Is the Taint Map completed?** (Source → Propagator → Sanitizer → Sink — all four fields filled, not left blank)
+- [ ] **Was the Sanitizer actually tested?** (Did you confirm the filter can be bypassed, or did you just assume it's absent?)
+- [ ] **Is the PoC derived from a real test run?** (Not constructed from what "should" happen — mark any unverified steps as `[NOT YET VERIFIED]`)
+- [ ] **Were all tools run with their actual output captured?** (No silent failures assumed to be successes)
+
+---
+
 ## Section 1 — Validity Challenges
 Ask these about every finding:
 

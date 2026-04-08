@@ -16,6 +16,22 @@
 - **Parameter/Field:**
 - **Auth required:** Yes / No / Partial
 
+## Taint Map (REQUIRED — fill before triage)
+- **Source**: <!-- Where does attacker-controlled data enter? (HTTP param, file upload, JWT claim, webhook URL...) -->
+- **Propagator**: <!-- How does the data flow? (function calls, ORM filters, serialization steps...) -->
+- **Sanitizer**: <!-- What validation exists? Can it be bypassed? Does it fail open? -->
+- **Sink**: <!-- Where does it land? (SQL query, eval(), URL fetcher, file write, template renderer...) -->
+
+**State Transition Plan:**
+```
+To achieve [Final Effect]:
+  → Need [Precondition N]
+    → Need [Precondition N-1]
+      → Need [Entry point / this vulnerability]
+```
+
+---
+
 ## Description
 <!-- Clear 2-3 sentence explanation of the vulnerability -->
 
