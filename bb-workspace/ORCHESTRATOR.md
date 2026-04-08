@@ -23,6 +23,15 @@ After each stage, update STATUS.md.
 
 ## Workflow Stages
 
+### Stage 0 — Auth Setup
+Before any testing, establish authentication:
+1. Check if credentials are provided in program.md
+2. If yes: authenticate and save session tokens/cookies
+3. If no: note which tests are blocked and proceed with unauthenticated testing
+4. Document the auth mechanism (cookie/JWT/API key) and how to refresh
+5. If HTTP/2 is required for POST requests, note this in program.md "Protocol notes"
+Update STATUS.md with auth status.
+
 ### Stage 1 — Recon
 Use /bb-recon and /bb-domain skills. Target: all in-scope domains from program.md.
 Copy F:/bugbounty/bb-workspace/recon/_template.md to recon/[target]-recon.md and fill it.
@@ -106,7 +115,7 @@ Print a summary:
 
 ---
 
-## RESUME PROMPT (if session was interrupted)
+## RESUME PROMPT
 
 ```
 Read F:/bugbounty/bb-workspace/STATUS.md to see current stage and progress.
@@ -139,9 +148,7 @@ If verdict is READY, generate the final report and save to:
 
 ## PARALLEL SESSION SETUP
 
-For maximum speed, run these 3 sessions simultaneously:
-
-**Session A — Recon + Domain**
+**Session A — Recon + Auth**
 ```
 Read F:/bugbounty/bb-workspace/program.md
 Read F:/bugbounty/SKILL_BB.md (Workflows B and E)
@@ -150,7 +157,7 @@ Fill F:/bugbounty/bb-workspace/recon/_template.md → save as recon/[target]-rec
 When done, append to STATUS.md session log.
 ```
 
-**Session B — Web + API Hunt**
+**Session B — Hunt (Web + API)**
 ```
 Read F:/bugbounty/bb-workspace/program.md
 Read F:/bugbounty/bb-workspace/recon/[target]-recon.md
